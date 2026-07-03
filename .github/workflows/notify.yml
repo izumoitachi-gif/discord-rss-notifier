@@ -1,0 +1,44 @@
+name: Discord RSS Notifier
+
+on:
+  schedule:
+    # 30分おき。GitHub Actionsのcronは負荷状況で数分ずれることがあるが
+    # RSS通知の用途では問題にならない
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}  # Actionsタブから手動実行もできるようにしておく
+
+# seen_urls.jsonをコミットし直すのでpush権限が必要
+permissions:
+  contents: write
+
+concurrency:
+  group: discord-rss-notifier
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install feedparser requests
+
+      - name: Run notifier
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python notifier.py
+
+      - name: Commit updated seen_urls.json (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_urls.json
+          git diff --staged --quiet || git commit -m "chore: update seen_urls.json"
+          git push
