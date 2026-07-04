@@ -3,15 +3,22 @@
 IC倶楽部「毎日ニュース5分類」自動通知（GitHub Actions版・一回実行して終了）
 
 森田さんの毎日ニュース5分類プロジェクト用。こころ(Codex)が設計した
-毎日ニュース5分類_取得クエリ設計_厳重版.md から、各分類に「特化ソース3つ＋
-Google News RSS 1つ」の計4本を選抜して実装。
+毎日ニュース5分類_取得クエリ設計_厳重版.md のクエリバンクから、各分類
+5本ずつ実データ検証済みのGoogle Newsクエリ（+③④はNHK政治カテゴリ直RSS）
+を選抜して実装。2026-07-05、旧4ソース構成(direct_rss全般/gdelt/openalex)
+が実データ検証で軒並み0件通過だったため全面差し替え。
 notifier.py（AI技術ブログ用）とは完全に別系統・別Webhook・別チャンネル群。
 
-4種類の入口ソースを使い分ける：
-  google_news : Google News RSS検索（動的クエリ）
+2種類の入口ソースを使い分ける：
+  google_news : Google News RSS検索（動的クエリ、掛け算構造で既に絞り込み済み）
   direct_rss  : 個別サイトの固定RSS + トピック別キーワードフィルタ
-  gdelt       : GDELT DOC API（英語圏の海外動向）
-  openalex    : OpenAlex API（学術研究、JSON形式）
+
+重要：TOPIC_FILTERS(掛け算式フィルタ)は "filter": True を明示したソースにのみ適用する。
+google_newsは検索クエリ自体が「主語 AND 領域 AND 行動」の掛け算になっており、
+Google側が意味理解込みで絞り込み済みのため、その結果にさらに単純文字列マッチの
+TOPIC_FILTERSを重ねると、的確な記事まで機械的に弾いてしまうことが実証された
+（例："高齢の親をAI詐欺から守る"は主語アンカー"高齢者"の完全一致がなく誤ってブロックされる）。
+direct_rss(NHK政治カテゴリ全体等、母集団が広いソース)にはTOPIC_FILTERSを適用して絞り込む。
 
 必要な環境変数（GitHub Secrets）：
   DISCORD_WEBHOOK_TOPIC1 ... ①｜後期高齢者ai挑戦
@@ -38,7 +45,7 @@ import urllib.parse
 from datetime import datetime
 
 # ============================================================
-# 設定：各トピック「特化3つ＋Google News RSS 1つ」の計4ソース
+# 設定：各トピック Google Newsクエリ中心の計5ソース（③④はNHK政治カテゴリRSSを1本含む）
 # ============================================================
 
 NEWS_TOPICS = {
@@ -47,11 +54,14 @@ NEWS_TOPICS = {
         "sources": [
             {"type": "google_news",
              "query": '("高齢者" OR "シニア" OR "後期高齢者" OR "75歳以上") ("生成AI" OR ChatGPT OR AI) (活用 OR 講座 OR 使い方 OR 事例 OR 支援)'},
-            {"type": "direct_rss", "url": "https://rss.itmedia.co.jp/rss/2.0/itmedia_all.xml",
-             "must_include": ["高齢者", "シニア", "後期高齢者"]},
-            {"type": "gdelt", "query": "elderly digital literacy AI training"},
             {"type": "google_news",
              "query": '("高齢者" OR シニア) ("デジタルデバイド" OR "デジタル格差" OR "デジタル活用支援") (総務省 OR 自治体 OR 講習会 OR 支援員)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR シニア) (スマホ OR スマートフォン OR LINE OR タブレット) (使い方 OR 講座 OR 教室 OR 支援 OR 相談)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR シニア) (スマホ OR SNS OR インターネット OR AI) (詐欺 OR フィッシング OR 被害 OR 対策 OR 相談)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR シニア) (AI OR スマホ OR デジタル) (自治体 OR 公民館 OR 社協 OR シルバー人材センター OR 講習会)'},
         ],
     },
     "②高齢者の老後不安を解消する完全ガイド": {
@@ -59,12 +69,14 @@ NEWS_TOPICS = {
         "sources": [
             {"type": "google_news",
              "query": '(高齢者 OR シニア OR 老後) ("老後資金" OR 年金 OR 生活費 OR 物価高 OR 医療費 OR 介護費) (不安 OR 対策 OR 支援 OR 制度 OR 改正 OR 調査)'},
-            {"type": "direct_rss", "url": "https://toyokeizai.net/list/feed/rss",
-             "must_include": ["老後", "年金", "高齢者", "介護"]},
-            {"type": "direct_rss", "url": "https://president.jp/list/rss",
-             "must_include": ["老後", "年金", "高齢者", "介護", "孤独"]},
             {"type": "google_news",
              "query": '("高齢者" OR シニア OR 高齢世帯 OR 独居) (孤独 OR 孤立 OR 見守り OR 居場所 OR つながり) (対策 OR 自治体 OR 支援 OR 調査)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR シニア) (健康寿命 OR フレイル OR 認知症 OR 介護予防 OR 医療 OR 介護) (対策 OR 支援 OR 調査 OR 予防)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR 老後) (介護保険 OR 在宅介護 OR 介護費 OR 介護離職 OR 施設) (改正 OR 負担 OR 支援 OR 対策)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR シニア) (詐欺 OR 消費者被害 OR 投資詐欺 OR 特殊詐欺 OR 定期購入) (注意 OR 対策 OR 相談 OR 国民生活センター)'},
         ],
     },
     "③和の国の羅針盤：高市政権の挑戦": {
@@ -72,11 +84,14 @@ NEWS_TOPICS = {
         "sources": [
             {"type": "google_news",
              "query": '(高市政権 OR 高市内閣 OR 高市早苗) (閣議決定 OR 所信表明 OR 施政方針 OR 基本方針 OR 政策)'},
-            {"type": "direct_rss", "url": "https://www3.nhk.or.jp/rss/news/cat0.xml",
-             "must_include": ["高市"]},
-            {"type": "gdelt", "query": "Takaichi Japan government policy"},
             {"type": "google_news",
              "query": '(高市政権 OR 高市早苗) (経済政策 OR 物価高 OR 減税 OR 給付 OR 財政 OR 成長戦略 OR 経済安全保障)'},
+            {"type": "google_news",
+             "query": '(高市政権 OR 高市早苗) (外交 OR 安全保障 OR 防衛 OR 日米 OR 中国 OR 台湾 OR 韓国)'},
+            {"type": "google_news",
+             "query": '(高市政権 OR 高市内閣) (支持率 OR 世論調査 OR 評価 OR 課題 OR 批判 OR 成果)'},
+            {"type": "direct_rss", "url": "https://www3.nhk.or.jp/rss/news/cat4.xml",
+             "must_include": ["高市"], "filter": True},
         ],
     },
     "④政治関連ニュース・日本、世界で今何が": {
@@ -84,11 +99,14 @@ NEWS_TOPICS = {
         "sources": [
             {"type": "google_news",
              "query": '(日本 OR 政府 OR 国会 OR 与党 OR 野党) (法案 OR 予算 OR 選挙 OR 政策 OR 改正 OR 閣議決定)'},
-            {"type": "direct_rss", "url": "https://www3.nhk.or.jp/rss/news/cat6.xml",
-             "must_include": []},
-            {"type": "gdelt", "query": "world politics election government diplomacy"},
             {"type": "google_news",
              "query": '(米国 OR アメリカ OR 中国 OR 台湾 OR 中東 OR ウクライナ OR ロシア) (外交 OR 安全保障 OR 選挙 OR 制裁 OR 紛争 OR 停戦)'},
+            {"type": "google_news",
+             "query": '(台湾 OR Taiwan) (中国 OR 米国 OR 日本) (安全保障 OR 軍事 OR 外交 OR 選挙)'},
+            {"type": "google_news",
+             "query": '(米国 OR アメリカ OR Trump OR Congress) (選挙 OR 政権 OR 外交 OR 制裁 OR 法案 OR 予算)'},
+            {"type": "direct_rss", "url": "https://www3.nhk.or.jp/rss/news/cat4.xml",
+             "must_include": [], "filter": False},
         ],
     },
     "⑤家族ができる高齢者の自己肯定感向上サポート": {
@@ -96,11 +114,14 @@ NEWS_TOPICS = {
         "sources": [
             {"type": "google_news",
              "query": '("高齢者" OR シニア) ("自己肯定感" OR 自尊感情 OR 自尊心 OR 尊厳) (家族 OR 支援 OR 関わり方 OR ケア OR 声かけ)'},
-            {"type": "direct_rss", "url": "https://president.jp/list/rss",
-             "must_include": ["自己肯定感", "尊厳", "生きがい", "家族の声かけ", "高齢者"]},
-            {"type": "openalex", "query": "older adults self-esteem dignity family caregiver"},
             {"type": "google_news",
              "query": '("高齢者" OR 独居 OR シニア) (孤独 OR 孤立 OR 会話 OR 傾聴 OR 見守り OR つながり) (家族 OR 支援 OR 介護)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR 認知症 OR 介護) (尊厳 OR 自己決定 OR 意思決定支援 OR 声かけ OR 接し方) (家族 OR 介護者)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR シニア) (生きがい OR 役割 OR 社会参加 OR ボランティア OR 趣味 OR 孫) (家族 OR 支援 OR 促す OR 事例)'},
+            {"type": "google_news",
+             "query": '("高齢者" OR シニア) (世代間交流 OR 孫 OR 子ども OR 地域交流) (生きがい OR 自己肯定感 OR 孤独 OR 役割)'},
         ],
     },
 }
@@ -110,6 +131,38 @@ HARD_EXCLUDE = [
     "求人", "転職", "採用", "広告", "PR", "キャンペーン",
     "芸能", "占い", "スポーツだけ", "まとめサイトだけ",
 ]
+
+# トピック別 掛け算式判定（同ファイル Section 12.2〜12.6）
+# 各グループ(主語/領域/行動 等)は「グループ内はOR、グループ間はAND」
+# NEWS_TOPICSの各sourceで "filter": True を明示した場合のみ適用する。
+# google_newsは検索クエリ自体が既にこの掛け算構造で絞り込み済みのため未適用
+# (二重適用すると的確な記事まで単純文字列マッチで弾かれることが実証された、2026-07-05)。
+# NHK政治カテゴリ全体RSSのような母集団が広いdirect_rssにのみ効かせる。
+TOPIC_FILTERS = {
+    "①後期高齢者のAI挑戦": [
+        ["高齢者", "シニア", "後期高齢者", "75歳以上", "高齢世代"],
+        ["AI", "生成AI", "ChatGPT", "スマホ", "パソコン", "タブレット", "LINE", "デジタル", "ICT", "マイナポータル"],
+        ["活用", "使い方", "講座", "教室", "支援", "事例", "体験", "詐欺対策"],
+    ],
+    "②高齢者の老後不安を解消する完全ガイド": [
+        ["高齢者", "シニア", "老後", "高齢世帯", "独居高齢者", "年金生活"],
+        ["老後資金", "年金", "生活費", "物価高", "医療費", "介護", "健康寿命", "フレイル", "認知症", "孤独", "孤立", "住まい", "詐欺"],
+        ["対策", "支援", "制度", "改正", "相談", "予防", "調査", "白書", "給付"],
+    ],
+    "③和の国の羅針盤：高市政権の挑戦": [
+        ["高市政権", "高市内閣", "高市早苗", "高市首相", "高市総理", "Takaichi", "Sanae Takaichi"],
+        ["政策", "外交", "安全保障", "経済", "国会", "閣議", "支持率", "世論", "法案", "答弁"],
+    ],
+    "④政治関連ニュース・日本、世界で今何が": [
+        ["日本", "政府", "国会", "与党", "野党", "米国", "中国", "欧州", "ロシア", "中東", "台湾", "韓国", "国連", "NATO"],
+        ["政治", "選挙", "政権", "外交", "制裁", "紛争", "法案", "予算", "支持率", "首脳会談", "安全保障"],
+    ],
+    "⑤家族ができる高齢者の自己肯定感向上サポート": [
+        ["高齢者", "シニア", "親", "祖父母", "認知症", "介護", "家族", "介護者"],
+        ["自己肯定感", "自尊感情", "自尊心", "尊厳", "自己決定", "生きがい", "役割", "孤独", "孤立"],
+        ["声かけ", "傾聴", "会話", "見守り", "接し方", "関わり方", "支援", "回想法", "ライフレビュー", "世代間交流"],
+    ],
+}
 
 SEEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ic_club_seen_urls.json")
 EMBED_COLOR = 0x2ECC71
@@ -147,52 +200,12 @@ def fetch_direct_rss(url, must_include):
     return results
 
 
-def fetch_gdelt(query):
-    url = ("https://api.gdeltproject.org/api/v2/doc/doc?query=" + urllib.parse.quote(query)
-           + "&mode=ArtList&maxrecords=" + str(MAX_ENTRIES_PER_SOURCE) + "&format=rss&timespan=7d")
-    try:
-        feed = feedparser.parse(url)
-        return [{"title": e.get("title", ""), "link": e.get("link", ""), "summary": e.get("summary", "")}
-                for e in feed.entries[:MAX_ENTRIES_PER_SOURCE]]
-    except Exception as e:
-        log(f"GDELT取得失敗: {e}")
-        return []
-
-
-def fetch_openalex(query):
-    url = "https://api.openalex.org/works?search=" + urllib.parse.quote(query) + f"&per-page={MAX_ENTRIES_PER_SOURCE}&sort=publication_date:desc"
-    try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "ic-club-notifier (mailto:izumoitachi@gmail.com)"})
-        if resp.status_code != 200:
-            log(f"OpenAlex取得失敗: status={resp.status_code}")
-            return []
-        data = resp.json()
-        results = []
-        for w in data.get("results", []):
-            title = w.get("title", "") or "(タイトルなし)"
-            link = w.get("id", "") or w.get("doi", "")
-            abstract_idx = w.get("abstract_inverted_index")
-            summary = ""
-            if abstract_idx:
-                words = sorted(abstract_idx.items(), key=lambda kv: kv[1][0])
-                summary = " ".join(w for w, _ in words)[:400]
-            results.append({"title": title, "link": link, "summary": summary})
-        return results
-    except Exception as e:
-        log(f"OpenAlex取得失敗: {e}")
-        return []
-
-
 def fetch_source(source):
     stype = source["type"]
     if stype == "google_news":
         return fetch_google_news(source["query"])
     if stype == "direct_rss":
         return fetch_direct_rss(source["url"], source.get("must_include", []))
-    if stype == "gdelt":
-        return fetch_gdelt(source["query"])
-    if stype == "openalex":
-        return fetch_openalex(source["query"])
     log(f"未知のソースタイプ: {stype}")
     return []
 
@@ -217,6 +230,16 @@ def save_seen(seen):
 def passes_hard_exclude(title, summary):
     text = f"{title} {summary}"
     return not any(word in text for word in HARD_EXCLUDE)
+
+
+def passes_topic_filter(topic_name, title, summary):
+    """こころの掛け算式判定(主語 AND 領域 AND 行動 等)。
+    グループ内はOR、グループ間はAND。トピック未登録なら素通し。"""
+    groups = TOPIC_FILTERS.get(topic_name)
+    if not groups:
+        return True
+    text = f"{title} {summary}"
+    return all(any(kw in text for kw in group) for group in groups)
 
 
 def post_to_discord(webhook_url, topic_name, item):
@@ -259,6 +282,7 @@ def one_pass():
             continue
 
         for source in config["sources"]:
+            apply_filter = source.get("filter", False)
             try:
                 items = fetch_source(source)
             except Exception as e:
@@ -269,7 +293,10 @@ def one_pass():
                 link = item.get("link", "")
                 if not link or link in seen:
                     continue
-                if not passes_hard_exclude(item.get("title", ""), item.get("summary", "")):
+                title, summary = item.get("title", ""), item.get("summary", "")
+                if not passes_hard_exclude(title, summary):
+                    continue
+                if apply_filter and not passes_topic_filter(topic_name, title, summary):
                     continue
                 if post_to_discord(webhook_url, topic_name, item):
                     seen.add(link)
