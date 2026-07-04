@@ -2,8 +2,9 @@ name: IC Club 5-Category News Notifier
 
 on:
   schedule:
-    # 30分おき。notify.ymlとは別ジョブなので独立して動く
-    - cron: "*/30 * * * *"
+    # 30分おき。notify.yml(0分・30分)とcron時刻を意図的にずらしている
+    # (同一リポジトリで同時刻に複数scheduleがあるとGitHub側で競合しやすいため)
+    - cron: "5,35 * * * *"
   workflow_dispatch: {}
 
 permissions:
