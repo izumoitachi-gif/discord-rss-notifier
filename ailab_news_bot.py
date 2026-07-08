@@ -119,28 +119,45 @@ def clean(t):
     return re.sub(r"\s+", " ", t).strip()
 
 # ---- 日本語化（英語タイトル/要約をGoogle翻訳で和訳・失敗時は原文＝重要ニュースは英語でも可）----
-try:
-    from deep_translator import GoogleTranslator
-    _TR_OK = True
-except ImportError:
-    import subprocess
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "deep-translator"])
-    try:
-        from deep_translator import GoogleTranslator
-        _TR_OK = True
-    except Exception:
-        _TR_OK = False
-
+# ★deep_translator(内部でrequests使用)はライブラリ側にtimeoutを渡す口が無く、
+#   GitHub Actionsのクラウド側IPからだと接続がハングして戻ってこないことがある
+#   （ローカルでは問題なくAction上でだけ無限待ちした実例2026-07-08）。
+#   スレッド+timeoutで包んでも、ワーカースレッド自体が本当にハングした場合は
+#   Pythonプロセス終了時のスレッドjoin待ちで結局終わらない恐れがある。
+#   なので外部ライブラリを経由せず urllib.request.urlopen(timeout=...) で
+#   Google翻訳の非公式エンドポイントを直接叩く＝ソケットレベルの本物のタイムアウトにする。
 _JP_RE = re.compile(r"[ぁ-んァ-ヶ一-龠]")
+_TR_FAIL_STREAK = 0
+_TR_TIMEOUT_SEC = 6
+_TR_MAX_FAIL_STREAK = 3   # これだけ連続で失敗/タイムアウトしたら以後は翻訳を諦める(原文のまま)
+
 def is_ja(t):
     if not t: return True
     return len(_JP_RE.findall(t)) >= max(3, int(len(t) * 0.12))   # 既に日本語なら翻訳しない
+
+def _gtranslate(text, timeout):
+    url = "https://translate.googleapis.com/translate_a/single?" + urllib.parse.urlencode({
+        "client": "gtx", "sl": "auto", "tl": "ja", "dt": "t", "q": text[:4800]
+    })
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:   # timeout=ソケットレベルで確実に打ち切る
+        data = json.loads(resp.read().decode("utf-8"))
+    return "".join(seg[0] for seg in data[0] if seg and seg[0])
+
 def to_ja(t):
-    if not t or not _TR_OK or is_ja(t): return t
+    global _TR_FAIL_STREAK
+    if not t or is_ja(t): return t
+    if _TR_FAIL_STREAK >= _TR_MAX_FAIL_STREAK:
+        return t   # 回路遮断中：翻訳サーバーに繋がらない状況と判断し、以後は叩かず原文のまま
     try:
-        return GoogleTranslator(source="auto", target="ja").translate(t[:4800]) or t
+        result = _gtranslate(t, _TR_TIMEOUT_SEC)
+        _TR_FAIL_STREAK = 0
+        return result or t
     except Exception:
-        return t   # 翻訳失敗時は原文のまま（重要ニュースは英語でも可）
+        _TR_FAIL_STREAK += 1
+        if _TR_FAIL_STREAK >= _TR_MAX_FAIL_STREAK:
+            print(f"    翻訳サーバー応答なし({_TR_TIMEOUT_SEC}s×{_TR_MAX_FAIL_STREAK}回連続) → 以後は原文のまま投稿")
+        return t   # タイムアウト/失敗時は原文のまま（重要ニュースは英語でも可）
 
 def load_webhooks():
     m = {}

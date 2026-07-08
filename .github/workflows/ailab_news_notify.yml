@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install feedparser deep-translator
+        run: pip install feedparser
 
       - name: Run AIラボ notifier
         env:
