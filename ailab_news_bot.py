@@ -3,12 +3,12 @@
 # ================================================================
 # ailab_news_bot.py — AIラボ鯖 15分類AIニュース自動配信（GitHub配布用・独立スクリプト）
 # ----------------------------------------------------------------
-# 方式: 公式RSS＋GitHubリリースAtom＋Google News RSS を feedparser で取得し Discord Webhook へ Embed 投稿。
+# 方式: 公式RSS＋公式sitemap＋Google News RSS を取得し Discord Webhook へ Embed 投稿。
 #       AI分類は使わず route_id / source で分類を固定（IC倶楽部方式）。
 # 設計の正本: 自分/AIニュース15分類_取得クエリ設計_完全再設計版 1.md（2026-07-08）
-# ★全ソースは 2026-07-08 に scratchpad/verify_sources.py で HTTP200＋entries>0 を実測確認済み。
-#   （設計の誤字は修正済み: ggorg→ggerganov[空→不採用], getcursor/cursor[404]→cursor.com/changelog,
-#    anthropic-cookbook commits[404]→不採用, Qwen→Qwen3）
+# 2026-07-09: 初期実運用で「量は出るが質が荒い」ことを確認。
+#   方針変更: 公式RSSが明確なものだけRSS採用、なければGoogle Newsを主語で絞る。
+#   alpha/rc/patch release、PR配信、無関係な一般記事はコード側で落とす。
 #
 # 使い方:
 #   1) pip install feedparser
@@ -32,82 +32,116 @@ except ImportError:
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEEN_FILE = os.path.join(HERE, "ailab_seen_urls.json")
 WEBHOOKS_JSON = os.path.join(HERE, "ailab_webhooks.json")
-PER_SOURCE = 3
-PER_CHANNEL = 4
+PER_SOURCE = 2
+PER_CHANNEL = 2
 UA = "AILabNewsBot/1.0 (+https://discord.com)"
 COL_BIZ, COL_FIELD, COL_SUM = 0x00E5FF, 0x00FF9C, 0xFF7A1A
 
-def rss(url, must=None): return {"type": "rss", "url": url, "must": must}
-def gn(q):               return {"type": "gn",  "q": q}
+GLOBAL_EXCLUDE = [
+    "PR TIMES", "プレスリリース", "アットプレス", "valuepress",
+    "株価", "決算", "ホールド評価", "求人", "採用", "セミナー", "イベント開催",
+    "ライブ配信", "ウェビナー", "講座", "Investing.com", "ファイナンス", "金融ニュース",
+    "使ってみた", "とは？", "とは何か", "徹底解説", "始め方", "初心者", "AIsmiley", "ai-market.jp",
+]
 
-# ---- 15分類（全ソース 2026-07-08 実測検証済み）----
+def rss(url, include=None, exclude=None, label=None, title_include=None, title_exclude=None):
+    return {"type": "rss", "url": url, "include": include or [], "exclude": exclude or [],
+            "label": label, "title_include": title_include or [], "title_exclude": title_exclude or []}
+
+def gn(q, include=None, exclude=None, label=None, title_include=None, title_exclude=None):
+    return {"type": "gn", "q": q, "include": include or [], "exclude": exclude or [],
+            "label": label, "title_include": title_include or [], "title_exclude": title_exclude or []}
+
+def sitemap(url, include=None, exclude=None, label=None, path_prefix=None, title_include=None, title_exclude=None):
+    return {"type": "sitemap", "url": url, "include": include or [], "exclude": exclude or [],
+            "label": label, "path_prefix": path_prefix or [], "title_include": title_include or [],
+            "title_exclude": title_exclude or []}
+
+# ---- 15分類（2026-07-09 ノイズ削減版）----
+OPENAI_TERMS = ["OpenAI", "ChatGPT", "GPT", "Sora", "Codex", "Responses API", "API"]
+CLAUDE_TERMS = ["Anthropic", "Claude", "Claude Code", "Claude API", "Sonnet", "Opus", "Haiku"]
+GEMINI_TERMS = ["Gemini", "DeepMind", "NotebookLM", "Veo", "Imagen", "Gemma", "Gemini API"]
+XAI_TERMS = ["xAI", "Grok"]
+COPILOT_TERMS = ["Copilot", "GitHub Copilot", "Microsoft 365 Copilot", "Copilot Studio", "Azure AI"]
+META_TERMS = ["Meta AI", "Meta Llama", "Llama", "Llama 4"]
+CHINA_TERMS = ["DeepSeek", "Qwen", "Kimi", "Zhipu", "GLM", "MiniMax", "Moonshot"]
+LOCAL_TERMS = ["Hugging Face", "Ollama", "llama.cpp", "GGUF", "LM Studio", "vLLM", "ローカルLLM"]
+IMGVID_TERMS = ["Midjourney", "Sora", "Runway", "Kling", "Veo", "Imagen", "Stable Diffusion", "Flux", "Luma AI", "Pika", "画像生成", "動画生成"]
+AUDIO_TERMS = ["ElevenLabs", "Suno", "Udio", "Whisper", "VOICEVOX", "音声生成", "音楽生成", "音声合成", "TTS", "voice", "speech"]
+TOOL_TERMS = ["Claude Code", "Codex", "Cursor", "GitHub Copilot", "n8n", "MCP", "LangChain", "Devin", "AIエージェント"]
+PAPER_TERMS = ["LLM", "language model", "agent", "reasoning", "RAG", "GPT", "diffusion", "multimodal", "transformer", "benchmark"]
+MODEL_RELEASE_TERMS = ["新モデル", "モデル公開", "オープンウェイト", "提供開始", "generally available", "open weights", "GPT", "Claude", "Gemini", "Grok", "Llama", "Qwen", "DeepSeek", "Mistral"]
+POLICY_TERMS = ["AI規制", "AI政策", "AI法", "AI著作権", "AI safety", "AI regulation", "AI Act", "export controls", "semiconductor", "半導体"]
+
 TOPICS = [
  # 🏢 企業別 ①〜⑦
  {"num":"①","name":"チャッピー速報","env":"OPENAI","color":COL_BIZ,"sources":[
-     rss("https://openai.com/news/rss.xml"),
-     rss("https://github.com/openai/codex/releases.atom"),
-     gn('(OpenAI OR ChatGPT OR Codex OR Sora OR GPT) (発表 OR 更新 OR 新モデル OR API OR 料金)')]},
+     rss("https://openai.com/news/rss.xml", include=OPENAI_TERMS,
+         exclude=["customer", "case study", "partnerships", "Academy", "education", "government and national security"]),
+     gn('(OpenAI OR ChatGPT OR Codex OR Sora OR GPT) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート OR 料金) -求人 -株価',
+        include=OPENAI_TERMS, exclude=["広告運用", "導入事例"])]},
  {"num":"②","name":"クロード速報","env":"CLAUDE","color":COL_BIZ,"sources":[
-     rss("https://tim-hilde.github.io/anthropic-rss/rss.xml"),                         # Claude本体(日本語)
-     rss("https://raw.githubusercontent.com/taobojlen/anthropic-rss-feed/main/anthropic_news_rss.xml"),  # Claude本体
-     rss("https://github.com/anthropics/claude-code/releases.atom"),                   # Claude Code更新
-     rss("https://github.com/anthropics/anthropic-sdk-python/releases.atom"),          # API/SDK更新
-     rss("https://github.com/modelcontextprotocol/specification/releases.atom"),       # MCP仕様
-     gn('(Anthropic OR Claude OR "Claude Code" OR MCP) (発表 OR 更新 OR 新モデル OR API OR セキュリティ)')]},
+     sitemap("https://www.anthropic.com/sitemap.xml",
+        include=["claude", "sonnet", "opus", "haiku", "model", "api", "code", "safety"],
+        exclude=["events/", "careers/", "legal/", "learn/", "pricing", "jobs", "interviewer",
+                 "golden-gate", "persona-selection", "economic-index"],
+        path_prefix=["/news/", "/engineering/"], label="Anthropic official sitemap"),
+     gn('(Anthropic OR Claude OR "Claude Code" OR "Claude API") (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート OR セキュリティ) -MCPサーバ -脆弱性',
+        include=CLAUDE_TERMS, exclude=["中转站", "プロキシ", "非公式", "ProductZine", "MVP", "PMF", "コミュニティアンバサダー"]),
+     gn('("Claude Code" OR "Claude API" OR "Claude Sonnet" OR "Claude Opus" OR "Claude Haiku") (release OR update OR pricing OR safety OR API)',
+        include=CLAUDE_TERMS, exclude=["MCP server vulnerability", "ProductZine", "Investing.com"])]},
  {"num":"③","name":"ジェミニ速報","env":"GEMINI","color":COL_BIZ,"sources":[
-     rss("https://blog.google/technology/ai/rss/"),
-     rss("https://deepmind.google/blog/rss.xml"),
-     gn('(Google OR Gemini OR DeepMind OR NotebookLM OR Veo OR Imagen OR Gemma) (発表 OR 更新 OR 新モデル OR API)')]},
+     rss("https://blog.google/technology/ai/rss/", include=GEMINI_TERMS,
+         exclude=["Pixel", "Google Photos", "写真"]),
+     rss("https://deepmind.google/blog/rss.xml", include=GEMINI_TERMS),
+     gn('(Gemini OR "Gemini API" OR DeepMind OR NotebookLM OR Veo OR Imagen OR Gemma) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート OR 開発者) -Pixel -写真',
+        include=GEMINI_TERMS)]},
  {"num":"④","name":"グロック速報","env":"XAI","color":COL_BIZ,"sources":[
-     gn('(xAI OR Grok OR "Grok 4" OR "Grok 3" OR "イーロン マスク AI") (発表 OR 更新 OR 新モデル OR API OR X)')]},
+     gn('(xAI OR Grok) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート OR benchmark OR release) -SpaceXAI -スペースXAI',
+        include=XAI_TERMS, exclude=["スペースXAI", "カーサー共同", "買収直後のCursor", "note", "AIイラストクリエイター"])]},
  {"num":"⑤","name":"コパイロット速報","env":"COPILOT","color":COL_BIZ,"sources":[
-     rss("https://news.microsoft.com/source/topics/ai/feed/"),                         # MS公式AI
-     rss("https://github.com/microsoft/vscode-copilot-release/releases.atom"),
-     gn('("Microsoft Copilot" OR "GitHub Copilot" OR "Copilot Studio" OR "Azure AI" OR "M365 Copilot") (発表 OR 更新 OR 新機能 OR 料金)')]},
+     rss("https://github.blog/changelog/label/copilot/feed/", include=COPILOT_TERMS, title_include=["Copilot"]),
+     gn('("Microsoft Copilot" OR "GitHub Copilot" OR "Copilot Studio" OR "Azure AI" OR "M365 Copilot") (発表 OR 公開 OR 提供開始 OR 新機能 OR 料金 OR アップデート)',
+        include=COPILOT_TERMS, exclude=["保険", "library", "farming", "school"])]},
  {"num":"⑥","name":"メタAI速報","env":"META","color":COL_BIZ,"sources":[
-     rss("https://github.com/meta-llama/llama-models/releases.atom"),
-     gn('("Meta AI" OR Llama OR "Llama 4" OR "Meta Llama" OR FAIR) (発表 OR 更新 OR 新モデル OR オープンソース)')]},
+     gn('("Meta AI" OR "Meta Llama" OR Llama) (発表 OR 公開 OR 提供開始 OR 新モデル OR オープンソース OR release OR benchmark) -"MUSIC FAIR" -音楽',
+        include=META_TERMS, exclude=["MUSIC FAIR", "Garmin", "AIグラス"])]},
  {"num":"⑦","name":"中国AI速報","env":"CHINA","color":COL_BIZ,"sources":[
-     rss("https://github.com/QwenLM/Qwen3/releases.atom"),
-     rss("https://github.com/deepseek-ai/DeepSeek-V3/releases.atom"),
-     rss("https://github.com/THUDM/GLM-4/releases.atom"),
-     gn('(DeepSeek OR Qwen OR Kimi OR GLM OR Zhipu OR "Moonshot AI" OR MiniMax) (発表 OR 更新 OR 新モデル OR 中国AI)')]},
+     gn('(DeepSeek OR Qwen OR Kimi OR Zhipu OR GLM OR MiniMax OR Moonshot) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR オープンソース OR benchmark)',
+        include=CHINA_TERMS, exclude=["BigGo ファイナンス"])]},
  # 🔬 分野別 ⑧〜⑫
  {"num":"⑧","name":"ローカルLLM速報","env":"LOCAL","color":COL_FIELD,"sources":[
-     rss("https://huggingface.co/blog/feed.xml"),
-     rss("https://ollama.com/blog/rss.xml"),
-     rss("https://github.com/ollama/ollama/releases.atom"),
-     rss("https://github.com/vllm-project/vllm/releases.atom"),
-     gn('(ローカルLLM OR Ollama OR "Hugging Face" OR llama.cpp OR GGUF OR 量子化 OR "LM Studio" OR vLLM) (更新 OR 新モデル OR GPU OR 推論)')]},
+     rss("https://huggingface.co/blog/feed.xml", include=LOCAL_TERMS + ["model", "agents", "inference"]),
+     rss("https://ollama.com/blog/rss.xml", include=LOCAL_TERMS + ["Gemma", "model", "MLX"]),
+     gn('(ローカルLLM OR Ollama OR "Hugging Face" OR llama.cpp OR GGUF OR "LM Studio" OR vLLM) (更新 OR 新モデル OR GPU OR 推論 OR 高速化)',
+        include=LOCAL_TERMS)]},
  {"num":"⑨","name":"画像・動画AI速報","env":"IMGVID","color":COL_FIELD,"sources":[
-     rss("https://github.com/comfyanonymous/ComfyUI/releases.atom"),
-     gn('(Midjourney OR Sora OR Runway OR Kling OR Veo OR Imagen OR "Stable Diffusion" OR Flux OR Luma OR Pika) (発表 OR 更新 OR 新モデル OR 動画生成 OR 画像生成)')]},
+     gn('(Midjourney OR Sora OR Runway OR Kling OR Veo OR Imagen OR "Stable Diffusion" OR Flux OR "Luma AI" OR Pika) (発表 OR 公開 OR 提供開始 OR 新モデル OR 動画生成 OR 画像生成 OR アップデート)',
+        include=IMGVID_TERMS, exclude=["訴訟", "裁判", "著作権訴訟", "提訴", "係争", "映画スタジオ", "UNIVERSAL MUSIC", "VITURE", "スマートグラス", "医療", "サウナ", "超音波", "Spa"])]},
  {"num":"⑩","name":"音声・音楽AI速報","env":"AUDIO","color":COL_FIELD,"sources":[
-     gn('(Whisper OR ElevenLabs OR Suno OR Udio OR 音声合成 OR 音楽生成 OR 文字起こし OR VOICEVOX OR "voice AI") (発表 OR 更新 OR 新モデル OR API)')]},
+     gn('(ElevenLabs OR Suno OR Udio OR Whisper OR VOICEVOX OR 音声生成AI OR 音楽生成AI OR 音声合成AI OR TTS) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート) -薬歴 -薬局 -医療 -銀行',
+        include=AUDIO_TERMS, exclude=["Moomoo", "Marble", "Sakana", "薬歴", "薬局"])]},
  {"num":"⑪","name":"AIツール・エージェント速報","env":"TOOLS","color":COL_FIELD,"sources":[
-     rss("https://github.com/openai/codex/releases.atom"),
      rss("https://cursor.com/changelog/rss.xml"),
-     rss("https://github.com/n8n-io/n8n/releases.atom"),
-     rss("https://github.com/langchain-ai/langchain/releases.atom"),
-     gn('("Claude Code" OR Codex OR Cursor OR n8n OR MCP OR LangChain OR Devin OR AIエージェント) (更新 OR 発表 OR 新機能 OR リリース)')]},
+     rss("https://blog.n8n.io/rss", include=["n8n", "AI", "agent", "workflow", "MCP"]),
+     gn('("Claude Code" OR Codex OR Cursor OR n8n OR MCP OR LangChain OR Devin OR AIエージェント) (更新 OR 発表 OR 新機能 OR リリース OR 事例) -PR',
+        include=TOOL_TERMS, exclude=["認定試験", "講座"])]},
  {"num":"⑫","name":"論文速報","env":"PAPERS","color":COL_FIELD,"sources":[
-     rss("http://export.arxiv.org/rss/cs.AI", ["LLM","language model","agent","reasoning","RAG","GPT","diffusion","multimodal","RLHF"]),
-     rss("http://export.arxiv.org/rss/cs.CL", ["LLM","language model","instruction","reasoning","RAG","dialogue","transformer"])]},
+     rss("http://export.arxiv.org/rss/cs.AI", include=PAPER_TERMS),
+     rss("http://export.arxiv.org/rss/cs.CL", include=PAPER_TERMS)]},
  # 🌐 総合 ⑬〜⑮
  {"num":"⑬","name":"AI最新速報（日本語）","env":"GENERAL","color":COL_SUM,"sources":[
-     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml"),                               # ITmedia AI+（AI専門）
-     rss("https://zenn.dev/topics/ai/feed"),
-     rss("https://zenn.dev/topics/llm/feed"),
-     rss("https://www.publickey1.jp/atom.xml", ["AI","LLM","Claude","GPT","Copilot","生成","Gemini"]),
-     rss("https://gigazine.net/news/rss_2.0/", ["AI","LLM","ChatGPT","Claude","Gemini","生成","OpenAI"]),
-     gn('(生成AI OR AIエージェント OR ChatGPT OR Claude OR Gemini OR ローカルLLM) (発表 OR 更新 OR 活用 OR 導入 OR 事例)')]},
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml"),
+     rss("https://www.publickey1.jp/atom.xml", include=["AI","LLM","Claude","GPT","Copilot","生成","Gemini","エージェント"]),
+     rss("https://gigazine.net/news/rss_2.0/", include=["AI","LLM","ChatGPT","Claude","Gemini","生成","OpenAI","Grok"]),
+     gn('(生成AI OR AIエージェント OR ChatGPT OR Claude OR Gemini OR ローカルLLM) (発表 OR 公開 OR 提供開始 OR 導入 OR 活用 OR 事例) -求人 -株価',
+        include=["AI", "生成AI", "ChatGPT", "Claude", "Gemini", "LLM", "エージェント"])]},
  {"num":"⑭","name":"新モデルリリース速報","env":"RELEASE","color":COL_SUM,"sources":[
-     gn('("新モデル" OR "モデル公開" OR "オープンウェイト" OR ベンチマーク OR 提供開始) (OpenAI OR Anthropic OR Google OR Meta OR DeepSeek OR Qwen OR xAI)'),
-     gn('("new model" OR "model release" OR "open weights" OR "generally available" OR benchmark) (OpenAI OR Anthropic OR Google OR Meta OR DeepSeek OR Qwen OR xAI)')]},
+     gn('("新モデル" OR "モデル公開" OR "オープンウェイト" OR "提供開始" OR "generally available" OR "open weights") (OpenAI OR Anthropic OR Google OR Gemini OR Meta OR DeepSeek OR Qwen OR xAI OR Grok OR Mistral) -株 -決算 -Benchmark',
+        include=MODEL_RELEASE_TERMS, exclude=["決算", "株", "ホールド評価", "限定公開", "グロービス", "学び放題", "政府が「待った」", "Межа", "Новини України"])]},
  {"num":"⑮","name":"世界のAI動向・規制","env":"WORLD","color":COL_SUM,"sources":[
-     rss("https://www.euractiv.com/sections/artificial-intelligence/feed/"),
-     gn('(AI規制 OR AI政策 OR "生成AI 規制" OR AI著作権 OR "半導体 輸出規制" OR データセンター OR "AI 投資")'),
-     gn('("AI regulation" OR "AI Act" OR "AI safety" OR "export controls" OR "AI copyright" OR "data center") when:7d')]},
+     gn('(AI規制 OR AI政策 OR AI法 OR AI著作権 OR "EU AI Act" OR "AI safety" OR "AI regulation" OR "AI export controls") (政府 OR EU OR 米国 OR 中国 OR 日本 OR 法案 OR 規制 OR policy OR regulation) -データセンター -イベント',
+        include=POLICY_TERMS, exclude=["Data Center Japan", "出展", "展示会", "ライブ配信", "無料公開"])]},
 ]
 
 def gn_url(q):
@@ -117,6 +151,64 @@ def clean(t):
     t = re.sub(r"<[^>]+>", " ", t or "")
     t = t.replace("&nbsp;", " ").replace("&amp;", "&").replace("&#39;", "'").replace("&quot;", '"').replace("&lt;", "<").replace("&gt;", ">")
     return re.sub(r"\s+", " ", t).strip()
+
+def contains_any(text, terms):
+    if not terms: return True
+    low = text.lower()
+    return any(str(term).lower() in low for term in terms)
+
+def is_release_version_noise(title):
+    t = title.strip()
+    low = t.lower()
+    if any(x.lower() in low for x in MODEL_RELEASE_TERMS + ["codex", "claude", "gemini", "grok", "llama", "qwen", "deepseek"]):
+        return False
+    return bool(re.fullmatch(r"v?\d+(\.\d+){1,4}([._-]?(alpha|beta|rc)\.?\d*)?", low) or low in {"stable", "nightly"})
+
+def canonical_title(title):
+    t = re.sub(r"\s+-\s+[^|]+(?:\s+\|.*)?$", "", title or "")
+    t = re.sub(r"\s*\([^)]{2,50}\)\s*$", "", t)
+    t = re.sub(r"\s*（[^）]{2,50}）\s*$", "", t)
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+def title_from_url(url):
+    path = urllib.parse.urlparse(url).path.strip("/")
+    slug = path.split("/")[-1] if path else urllib.parse.urlparse(url).netloc
+    slug = urllib.parse.unquote(slug)
+    return re.sub(r"[-_]+", " ", slug).strip().title()
+
+def fetch_sitemap(src):
+    try:
+        req = urllib.request.Request(src["url"], headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            xml = resp.read(500000).decode("utf-8", "replace")
+    except Exception as e:
+        print("    sitemap失敗:", src["url"][:50], e); return []
+    include = src.get("include") or []
+    exclude = GLOBAL_EXCLUDE + (src.get("exclude") or [])
+    title_include = src.get("title_include") or []
+    title_exclude = src.get("title_exclude") or []
+    seen_titles = set()
+    prefixes = src.get("path_prefix") or []
+    entries = []
+    for block in re.findall(r"<url>(.*?)</url>", xml, re.S):
+        loc_m = re.search(r"<loc>(.*?)</loc>", block, re.S)
+        if not loc_m: continue
+        loc = clean(loc_m.group(1))
+        parsed = urllib.parse.urlparse(loc)
+        path = parsed.path or "/"
+        if prefixes and not any(path.startswith(prefix) for prefix in prefixes): continue
+        title = title_from_url(loc)
+        lastmod_m = re.search(r"<lastmod>(.*?)</lastmod>", block, re.S)
+        lastmod = clean(lastmod_m.group(1)) if lastmod_m else ""
+        filter_text = " ".join([title, path])
+        if title_include and not contains_any(title, title_include): continue
+        if title_exclude and contains_any(title, title_exclude): continue
+        if include and not contains_any(filter_text, include): continue
+        if exclude and contains_any(filter_text, exclude): continue
+        summ = f"official page updated: {lastmod[:10]}" if lastmod else ""
+        entries.append((lastmod, title, loc, summ, src.get("label") or parsed.netloc))
+    entries.sort(key=lambda x: x[0], reverse=True)
+    return [(title, loc, summ, label) for lastmod, title, loc, summ, label in entries[:PER_SOURCE]]
 
 # ---- 日本語化（英語タイトル/要約をGoogle翻訳で和訳・失敗時は原文＝重要ニュースは英語でも可）----
 # ★deep_translator(内部でrequests使用)はライブラリ側にtimeoutを渡す口が無く、
@@ -178,22 +270,41 @@ def save_seen(s):
     io.open(SEEN_FILE, "w", encoding="utf-8").write(json.dumps(sorted(s), ensure_ascii=False))
 
 def fetch(src):
+    if src["type"] == "sitemap":
+        return fetch_sitemap(src)
     url = gn_url(src["q"]) if src["type"] == "gn" else src["url"]
     try:
         f = feedparser.parse(url)
     except Exception as e:
         print("    fetch失敗:", url[:50], e); return []
-    src_label = clean((f.feed.get("title", "") if getattr(f, "feed", None) else "")) or urllib.parse.urlparse(url).netloc
-    must = src.get("must")
+    feed_label = clean((f.feed.get("title", "") if getattr(f, "feed", None) else "")) or urllib.parse.urlparse(url).netloc
+    include = src.get("include") or src.get("must") or []
+    exclude = GLOBAL_EXCLUDE + (src.get("exclude") or [])
+    title_include = src.get("title_include") or []
+    title_exclude = src.get("title_exclude") or []
     out = []
+    seen_titles = set()
     for e in f.entries[: PER_SOURCE * 5]:
         title = clean(e.get("title", ""))
         if not title: continue
-        if must and not any(w.lower() in title.lower() for w in must): continue
         summ = clean(e.get("summary", "") or e.get("description", ""))
+        entry_source = e.get("source", {})
+        if isinstance(entry_source, dict):
+            entry_source = clean(entry_source.get("title", ""))
+        else:
+            entry_source = ""
+        filter_text = " ".join([title, summ, entry_source])
+        if is_release_version_noise(title): continue
+        title_key = canonical_title(title)
+        if title_key in seen_titles: continue
+        if title_include and not contains_any(title, title_include): continue
+        if title_exclude and contains_any(title, title_exclude): continue
+        if include and not contains_any(filter_text, include): continue
+        if exclude and contains_any(filter_text, exclude): continue
+        seen_titles.add(title_key)
         if len(summ) < 25 or summ[:18] == title[:18]: summ = ""
         summ = summ[:160] + ("…" if len(summ) > 160 else "")
-        out.append((title, e.get("link", ""), summ, src_label))
+        out.append((title, e.get("link", ""), summ, src.get("label") or entry_source or feed_label))
         if len(out) >= PER_SOURCE: break
     return out
 
@@ -226,8 +337,9 @@ def main():
         picked, keys = [], set()
         for src in t["sources"]:
             for title, link, summ, srclabel in fetch(src):
-                if not link or link in seen or link in keys: continue
-                keys.add(link); picked.append((title, link, summ, srclabel))
+                title_key = canonical_title(title)
+                if not link or link in seen or link in keys or title_key in keys: continue
+                keys.add(link); keys.add(title_key); picked.append((title, link, summ, srclabel))
             time.sleep(0.4)
         picked = picked[: PER_CHANNEL]
         if not picked:
