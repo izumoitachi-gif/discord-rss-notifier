@@ -3,12 +3,12 @@
 # ================================================================
 # ailab_news_bot.py — AIラボ鯖 15分類AIニュース自動配信（GitHub配布用・独立スクリプト）
 # ----------------------------------------------------------------
-# 方式: 公式RSS＋公式sitemap＋Google News RSS を取得し Discord Webhook へ Embed 投稿。
+# 方式: 朝活/激裏型。Google News検索RSS＋実証済みニュース母体を分類別クエリで切って投稿。
 #       AI分類は使わず route_id / source で分類を固定（IC倶楽部方式）。
 # 設計の正本: 自分/AIニュース15分類_取得クエリ設計_完全再設計版 1.md（2026-07-08）
 # 2026-07-09: 初期実運用で「量は出るが質が荒い」ことを確認。
-#   方針変更: 公式RSSが明確なものだけRSS採用、なければGoogle Newsを主語で絞る。
-#   alpha/rc/patch release、PR配信、無関係な一般記事はコード側で落とす。
+#   方針変更: 公式RSS/GitHub release/APIを主水路にしない。
+#   トレンド朝活で効いているニュース母体を15分類のクエリ違いで使い回す。
 #
 # 使い方:
 #   1) pip install feedparser
@@ -42,6 +42,9 @@ GLOBAL_EXCLUDE = [
     "株価", "決算", "ホールド評価", "求人", "採用", "セミナー", "イベント開催",
     "ライブ配信", "ウェビナー", "講座", "Investing.com", "ファイナンス", "金融ニュース",
     "使ってみた", "とは？", "とは何か", "徹底解説", "始め方", "初心者", "AIsmiley", "ai-market.jp",
+    "キャンペーン", "無料公開", "広告", "Sponsored",
+    "料金はいくら", "全プラン比較", "最適な選び方", "おすすめランキング", "資料請求",
+    "日記", "使い倒し", "仕事術", "入門",
 ]
 
 def rss(url, include=None, exclude=None, label=None, title_include=None, title_exclude=None):
@@ -59,7 +62,7 @@ def sitemap(url, include=None, exclude=None, label=None, path_prefix=None, title
 
 # ---- 15分類（2026-07-09 ノイズ削減版）----
 OPENAI_TERMS = ["OpenAI", "ChatGPT", "GPT", "Sora", "Codex", "Responses API", "API"]
-CLAUDE_TERMS = ["Anthropic", "Claude", "Claude Code", "Claude API", "Sonnet", "Opus", "Haiku"]
+CLAUDE_TERMS = ["Anthropic", "Claude", "Claude Code", "Claude API", "Claude Sonnet", "Claude Opus", "Claude Haiku"]
 GEMINI_TERMS = ["Gemini", "DeepMind", "NotebookLM", "Veo", "Imagen", "Gemma", "Gemini API"]
 XAI_TERMS = ["xAI", "Grok"]
 COPILOT_TERMS = ["Copilot", "GitHub Copilot", "Microsoft 365 Copilot", "Copilot Studio", "Azure AI"]
@@ -74,74 +77,109 @@ MODEL_RELEASE_TERMS = ["新モデル", "モデル公開", "オープンウェイ
 POLICY_TERMS = ["AI規制", "AI政策", "AI法", "AI著作権", "AI safety", "AI regulation", "AI Act", "export controls", "semiconductor", "半導体"]
 
 TOPICS = [
- # 🏢 企業別 ①〜⑦
+ # 🏢 企業別 ①〜⑦：主水路はGoogle News検索RSS。公式RSS/changelogは後順位の補助。
  {"num":"①","name":"チャッピー速報","env":"OPENAI","color":COL_BIZ,"sources":[
-     rss("https://openai.com/news/rss.xml", include=OPENAI_TERMS,
-         exclude=["customer", "case study", "partnerships", "Academy", "education", "government and national security"]),
-     gn('(OpenAI OR ChatGPT OR Codex OR Sora OR GPT) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート OR 料金) -求人 -株価',
-        include=OPENAI_TERMS, exclude=["広告運用", "導入事例"])]},
+     gn('(OpenAI OR ChatGPT OR Codex OR Sora OR GPT) (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR 料金 OR API) -求人 -株価 -広告',
+        include=OPENAI_TERMS, exclude=["広告運用", "導入事例", "customer", "case study"]),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=OPENAI_TERMS),
+     rss("https://gigazine.net/news/rss_2.0/", include=OPENAI_TERMS),
+     rss("https://zenn.dev/topics/ai/feed", include=OPENAI_TERMS)]},
  {"num":"②","name":"クロード速報","env":"CLAUDE","color":COL_BIZ,"sources":[
+     gn('(Anthropic OR Claude OR "Claude Code" OR "Claude API") (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR 料金 OR API) -MCPサーバ -脆弱性',
+        include=CLAUDE_TERMS, exclude=["中转站", "プロキシ", "非公式", "ProductZine", "MVP", "PMF", "コミュニティアンバサダー"]),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=CLAUDE_TERMS),
+     rss("https://gigazine.net/news/rss_2.0/", include=CLAUDE_TERMS),
+     rss("https://zenn.dev/topics/claude/feed", include=CLAUDE_TERMS),
      sitemap("https://www.anthropic.com/sitemap.xml",
         include=["claude", "sonnet", "opus", "haiku", "model", "api", "code", "safety"],
         exclude=["events/", "careers/", "legal/", "learn/", "pricing", "jobs", "interviewer",
                  "golden-gate", "persona-selection", "economic-index"],
-        path_prefix=["/news/", "/engineering/"], label="Anthropic official sitemap"),
-     gn('(Anthropic OR Claude OR "Claude Code" OR "Claude API") (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート OR セキュリティ) -MCPサーバ -脆弱性',
-        include=CLAUDE_TERMS, exclude=["中转站", "プロキシ", "非公式", "ProductZine", "MVP", "PMF", "コミュニティアンバサダー"]),
-     gn('("Claude Code" OR "Claude API" OR "Claude Sonnet" OR "Claude Opus" OR "Claude Haiku") (release OR update OR pricing OR safety OR API)',
-        include=CLAUDE_TERMS, exclude=["MCP server vulnerability", "ProductZine", "Investing.com"])]},
+        path_prefix=["/news/", "/engineering/"], label="Anthropic official sitemap")]},
  {"num":"③","name":"ジェミニ速報","env":"GEMINI","color":COL_BIZ,"sources":[
-     rss("https://blog.google/technology/ai/rss/", include=GEMINI_TERMS,
-         exclude=["Pixel", "Google Photos", "写真"]),
+     gn('(Gemini OR "Gemini API" OR DeepMind OR NotebookLM OR Veo OR Imagen OR Gemma) (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR API OR アップデート) -Pixel -写真',
+        include=GEMINI_TERMS),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=GEMINI_TERMS),
+     rss("https://gigazine.net/news/rss_2.0/", include=GEMINI_TERMS),
+     rss("https://blog.google/technology/ai/rss/", include=GEMINI_TERMS, exclude=["Pixel", "Google Photos", "写真"]),
      rss("https://deepmind.google/blog/rss.xml", include=GEMINI_TERMS),
-     gn('(Gemini OR "Gemini API" OR DeepMind OR NotebookLM OR Veo OR Imagen OR Gemma) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート OR 開発者) -Pixel -写真',
-        include=GEMINI_TERMS)]},
+     rss("https://zenn.dev/topics/gemini/feed", include=GEMINI_TERMS, title_include=["Gemini"])]},
  {"num":"④","name":"グロック速報","env":"XAI","color":COL_BIZ,"sources":[
-     gn('(xAI OR Grok) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート OR benchmark OR release) -SpaceXAI -スペースXAI',
-        include=XAI_TERMS, exclude=["スペースXAI", "カーサー共同", "買収直後のCursor", "note", "AIイラストクリエイター"])]},
+     gn('(xAI OR Grok) (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR API OR アップデート OR benchmark) -SpaceXAI -スペースXAI',
+        include=XAI_TERMS, exclude=["スペースXAI", "カーサー共同", "買収直後のCursor", "note", "AIイラストクリエイター"]),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=XAI_TERMS),
+     rss("https://gigazine.net/news/rss_2.0/", include=XAI_TERMS),
+     rss("https://hnrss.org/frontpage", include=XAI_TERMS)]},
  {"num":"⑤","name":"コパイロット速報","env":"COPILOT","color":COL_BIZ,"sources":[
-     rss("https://github.blog/changelog/label/copilot/feed/", include=COPILOT_TERMS, title_include=["Copilot"]),
      gn('("Microsoft Copilot" OR "GitHub Copilot" OR "Copilot Studio" OR "Azure AI" OR "M365 Copilot") (発表 OR 公開 OR 提供開始 OR 新機能 OR 料金 OR アップデート)',
-        include=COPILOT_TERMS, exclude=["保険", "library", "farming", "school"])]},
+        include=COPILOT_TERMS, exclude=["保険", "library", "farming", "school"]),
+     rss("https://www.publickey1.jp/atom.xml", include=COPILOT_TERMS),
+     rss("https://zenn.dev/topics/ai/feed", include=COPILOT_TERMS, title_include=["Copilot"]),
+     rss("https://github.blog/changelog/label/copilot/feed/", include=COPILOT_TERMS, title_include=["Copilot"])]},
  {"num":"⑥","name":"メタAI速報","env":"META","color":COL_BIZ,"sources":[
-     gn('("Meta AI" OR "Meta Llama" OR Llama) (発表 OR 公開 OR 提供開始 OR 新モデル OR オープンソース OR release OR benchmark) -"MUSIC FAIR" -音楽',
-        include=META_TERMS, exclude=["MUSIC FAIR", "Garmin", "AIグラス"])]},
+     gn('("Meta AI" OR "Meta Llama" OR Llama) (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR オープンソース OR benchmark) -"MUSIC FAIR" -音楽',
+        include=META_TERMS, exclude=["MUSIC FAIR", "Garmin", "AIグラス"]),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=META_TERMS),
+     rss("https://gigazine.net/news/rss_2.0/", include=META_TERMS),
+     rss("https://hnrss.org/frontpage", include=META_TERMS)]},
  {"num":"⑦","name":"中国AI速報","env":"CHINA","color":COL_BIZ,"sources":[
-     gn('(DeepSeek OR Qwen OR Kimi OR Zhipu OR GLM OR MiniMax OR Moonshot) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR オープンソース OR benchmark)',
-        include=CHINA_TERMS, exclude=["BigGo ファイナンス"])]},
+     gn('(DeepSeek OR Qwen OR Kimi OR Zhipu OR GLM OR MiniMax OR Moonshot) (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR API OR オープンソース OR benchmark)',
+        include=CHINA_TERMS, exclude=["BigGo ファイナンス"]),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=CHINA_TERMS),
+     rss("https://gigazine.net/news/rss_2.0/", include=CHINA_TERMS),
+     rss("https://hnrss.org/frontpage", include=CHINA_TERMS)]},
  # 🔬 分野別 ⑧〜⑫
  {"num":"⑧","name":"ローカルLLM速報","env":"LOCAL","color":COL_FIELD,"sources":[
+     gn('(ローカルLLM OR Ollama OR "Hugging Face" OR llama.cpp OR GGUF OR "LM Studio" OR vLLM) (発表 OR 公開 OR 提供開始 OR 新モデル OR GPU OR 推論 OR 高速化)',
+        include=LOCAL_TERMS),
      rss("https://huggingface.co/blog/feed.xml", include=LOCAL_TERMS + ["model", "agents", "inference"]),
-     rss("https://ollama.com/blog/rss.xml", include=LOCAL_TERMS + ["Gemma", "model", "MLX"]),
-     gn('(ローカルLLM OR Ollama OR "Hugging Face" OR llama.cpp OR GGUF OR "LM Studio" OR vLLM) (更新 OR 新モデル OR GPU OR 推論 OR 高速化)',
-        include=LOCAL_TERMS)]},
+     rss("https://hnrss.org/frontpage", include=LOCAL_TERMS),
+     rss("https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day&limit=10", include=LOCAL_TERMS + ["LLM", "model"]),
+     rss("https://ollama.com/blog/rss.xml", include=LOCAL_TERMS + ["Gemma", "model", "MLX"])]},
  {"num":"⑨","name":"画像・動画AI速報","env":"IMGVID","color":COL_FIELD,"sources":[
-     gn('(Midjourney OR Sora OR Runway OR Kling OR Veo OR Imagen OR "Stable Diffusion" OR Flux OR "Luma AI" OR Pika) (発表 OR 公開 OR 提供開始 OR 新モデル OR 動画生成 OR 画像生成 OR アップデート)',
-        include=IMGVID_TERMS, exclude=["訴訟", "裁判", "著作権訴訟", "提訴", "係争", "映画スタジオ", "UNIVERSAL MUSIC", "VITURE", "スマートグラス", "医療", "サウナ", "超音波", "Spa"])]},
+     gn('(Midjourney OR Sora OR Runway OR Kling OR Veo OR Imagen OR "Stable Diffusion" OR Flux OR "Luma AI" OR Pika) (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR 動画生成 OR 画像生成 OR アップデート)',
+        include=IMGVID_TERMS, exclude=["訴訟", "裁判", "著作権訴訟", "提訴", "係争", "映画スタジオ", "UNIVERSAL MUSIC", "VITURE", "スマートグラス", "医療", "サウナ", "超音波", "Spa"]),
+     rss("https://gigazine.net/news/rss_2.0/", include=IMGVID_TERMS),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=IMGVID_TERMS),
+     rss("https://hnrss.org/frontpage", include=IMGVID_TERMS)]},
  {"num":"⑩","name":"音声・音楽AI速報","env":"AUDIO","color":COL_FIELD,"sources":[
-     gn('(ElevenLabs OR Suno OR Udio OR Whisper OR VOICEVOX OR 音声生成AI OR 音楽生成AI OR 音声合成AI OR TTS) (発表 OR 公開 OR 提供開始 OR 新モデル OR API OR アップデート) -薬歴 -薬局 -医療 -銀行',
-        include=AUDIO_TERMS, exclude=["Moomoo", "Marble", "Sakana", "薬歴", "薬局"])]},
+     gn('(ElevenLabs OR Suno OR Udio OR Whisper OR VOICEVOX OR 音声生成AI OR 音楽生成AI OR 音声合成AI OR TTS) (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR API OR アップデート) -薬歴 -薬局 -医療 -銀行',
+        include=AUDIO_TERMS, exclude=["Moomoo", "Marble", "Sakana", "薬歴", "薬局"]),
+     rss("https://gigazine.net/news/rss_2.0/", include=AUDIO_TERMS),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=AUDIO_TERMS),
+     rss("https://hnrss.org/frontpage", include=AUDIO_TERMS)]},
  {"num":"⑪","name":"AIツール・エージェント速報","env":"TOOLS","color":COL_FIELD,"sources":[
-     rss("https://cursor.com/changelog/rss.xml"),
-     rss("https://blog.n8n.io/rss", include=["n8n", "AI", "agent", "workflow", "MCP"]),
-     gn('("Claude Code" OR Codex OR Cursor OR n8n OR MCP OR LangChain OR Devin OR AIエージェント) (更新 OR 発表 OR 新機能 OR リリース OR 事例) -PR',
-        include=TOOL_TERMS, exclude=["認定試験", "講座"])]},
+     gn('("Claude Code" OR Codex OR Cursor OR n8n OR MCP OR LangChain OR Devin OR AIエージェント) (発表 OR 公開 OR 提供開始 OR 新機能 OR リリース OR 事例) -PR',
+        include=TOOL_TERMS, exclude=["認定試験", "講座"]),
+     rss("https://zenn.dev/topics/ai/feed", include=TOOL_TERMS),
+     rss("https://hnrss.org/frontpage", include=TOOL_TERMS),
+     rss("https://www.publickey1.jp/atom.xml", include=TOOL_TERMS),
+     rss("https://cursor.com/changelog/rss.xml", include=["Cursor", "agent", "MCP"]),
+     rss("https://blog.n8n.io/rss", include=["n8n", "AI", "agent", "workflow", "MCP"])]},
  {"num":"⑫","name":"論文速報","env":"PAPERS","color":COL_FIELD,"sources":[
      rss("http://export.arxiv.org/rss/cs.AI", include=PAPER_TERMS),
-     rss("http://export.arxiv.org/rss/cs.CL", include=PAPER_TERMS)]},
+     rss("http://export.arxiv.org/rss/cs.CL", include=PAPER_TERMS),
+     rss("https://hnrss.org/frontpage", include=PAPER_TERMS)]},
  # 🌐 総合 ⑬〜⑮
  {"num":"⑬","name":"AI最新速報（日本語）","env":"GENERAL","color":COL_SUM,"sources":[
-     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml"),
-     rss("https://www.publickey1.jp/atom.xml", include=["AI","LLM","Claude","GPT","Copilot","生成","Gemini","エージェント"]),
-     rss("https://gigazine.net/news/rss_2.0/", include=["AI","LLM","ChatGPT","Claude","Gemini","生成","OpenAI","Grok"]),
      gn('(生成AI OR AIエージェント OR ChatGPT OR Claude OR Gemini OR ローカルLLM) (発表 OR 公開 OR 提供開始 OR 導入 OR 活用 OR 事例) -求人 -株価',
-        include=["AI", "生成AI", "ChatGPT", "Claude", "Gemini", "LLM", "エージェント"])]},
+        include=["AI", "生成AI", "ChatGPT", "Claude", "Gemini", "LLM", "エージェント"]),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml"),
+     rss("https://gigazine.net/news/rss_2.0/", include=["AI","LLM","ChatGPT","Claude","Gemini","生成","OpenAI","Grok"]),
+     rss("https://www.publickey1.jp/atom.xml", include=["AI","LLM","Claude","GPT","Copilot","生成","Gemini","エージェント"]),
+     rss("https://zenn.dev/topics/ai/feed", include=["AI", "LLM", "ChatGPT", "Claude", "Gemini", "エージェント"])]},
  {"num":"⑭","name":"新モデルリリース速報","env":"RELEASE","color":COL_SUM,"sources":[
      gn('("新モデル" OR "モデル公開" OR "オープンウェイト" OR "提供開始" OR "generally available" OR "open weights") (OpenAI OR Anthropic OR Google OR Gemini OR Meta OR DeepSeek OR Qwen OR xAI OR Grok OR Mistral) -株 -決算 -Benchmark',
-        include=MODEL_RELEASE_TERMS, exclude=["決算", "株", "ホールド評価", "限定公開", "グロービス", "学び放題", "政府が「待った」", "Межа", "Новини України"])]},
+        include=MODEL_RELEASE_TERMS, exclude=["決算", "株", "ホールド評価", "限定公開", "グロービス", "学び放題", "政府が「待った」", "Межа", "Новини України"]),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=MODEL_RELEASE_TERMS),
+     rss("https://gigazine.net/news/rss_2.0/", include=MODEL_RELEASE_TERMS),
+     rss("https://hnrss.org/frontpage", include=MODEL_RELEASE_TERMS)]},
  {"num":"⑮","name":"世界のAI動向・規制","env":"WORLD","color":COL_SUM,"sources":[
      gn('(AI規制 OR AI政策 OR AI法 OR AI著作権 OR "EU AI Act" OR "AI safety" OR "AI regulation" OR "AI export controls") (政府 OR EU OR 米国 OR 中国 OR 日本 OR 法案 OR 規制 OR policy OR regulation) -データセンター -イベント',
-        include=POLICY_TERMS, exclude=["Data Center Japan", "出展", "展示会", "ライブ配信", "無料公開"])]},
+        include=POLICY_TERMS, exclude=["Data Center Japan", "出展", "展示会", "ライブ配信", "無料公開"]),
+     rss("https://www3.nhk.or.jp/rss/news/cat6.xml", include=POLICY_TERMS + ["AI", "半導体", "中国", "米国"]),
+     rss("https://www3.nhk.or.jp/rss/news/cat5.xml", include=POLICY_TERMS + ["AI", "半導体", "経済安全保障"]),
+     rss("https://feeds.bbci.co.uk/news/world/rss.xml", include=POLICY_TERMS + ["AI", "semiconductor"]),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=POLICY_TERMS)]},
 ]
 
 def gn_url(q):
@@ -155,7 +193,17 @@ def clean(t):
 def contains_any(text, terms):
     if not terms: return True
     low = text.lower()
-    return any(str(term).lower() in low for term in terms)
+    for term in terms:
+        needle = str(term).lower()
+        if not needle:
+            continue
+        if len(needle) <= 2 and needle.isascii() and needle.isalnum():
+            if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", low):
+                return True
+            continue
+        if needle in low:
+            return True
+    return False
 
 def is_release_version_noise(title):
     t = title.strip()
@@ -308,6 +356,48 @@ def fetch(src):
         if len(out) >= PER_SOURCE: break
     return out
 
+def collect_topic_items(t, seen, sleep_sec=0.4):
+    source_hits = []
+    keys = set()
+    for src in t["sources"]:
+        rows = []
+        for title, link, summ, srclabel in fetch(src):
+            title_key = canonical_title(title)
+            if not link or link in seen or link in keys or title_key in keys:
+                continue
+            keys.add(link)
+            keys.add(title_key)
+            rows.append((title, link, summ, srclabel))
+        if rows:
+            source_hits.append(rows)
+        if sleep_sec:
+            time.sleep(sleep_sec)
+
+    picked = []
+    picked_keys = set()
+    def add_item(item):
+        key = item[1] or canonical_title(item[0])
+        if key in picked_keys:
+            return
+        picked_keys.add(key)
+        picked.append(item)
+
+    # Google Newsだけで枠を埋めない。朝活方式として、実証済み母体を分類別に混ぜる。
+    for rows in source_hits:
+        if len(picked) >= PER_CHANNEL:
+            break
+        add_item(rows[0])
+
+    if len(picked) < PER_CHANNEL:
+        for rows in source_hits:
+            for item in rows[1:]:
+                if len(picked) >= PER_CHANNEL:
+                    break
+                add_item(item)
+            if len(picked) >= PER_CHANNEL:
+                break
+    return picked[:PER_CHANNEL]
+
 def post(url, header, items, color):
     embeds = []
     for title, link, summ, src in items:
@@ -334,14 +424,7 @@ def main():
         url = hooks.get(t["env"])
         if not url:
             print(f"{t['num']} {t['name']} … webhook未設定スキップ"); continue
-        picked, keys = [], set()
-        for src in t["sources"]:
-            for title, link, summ, srclabel in fetch(src):
-                title_key = canonical_title(title)
-                if not link or link in seen or link in keys or title_key in keys: continue
-                keys.add(link); keys.add(title_key); picked.append((title, link, summ, srclabel))
-            time.sleep(0.4)
-        picked = picked[: PER_CHANNEL]
+        picked = collect_topic_items(t, seen)
         if not picked:
             print(f"{t['num']} {t['name']} … 新規なし"); continue
         picked = [(to_ja(ti), li, to_ja(su), sr) for (ti, li, su, sr) in picked]  # 英語→日本語（失敗時は原文）
