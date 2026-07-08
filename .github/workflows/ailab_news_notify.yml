@@ -1,0 +1,57 @@
+name: AIラボ 15分類 AI News Notifier
+
+on:
+  schedule:
+    # 15分・45分。ic_club_notify.yml(5,35)・notify.yml(*/30=0,30)とcron時刻を意図的にずらしている
+    # (同一リポジトリで同時刻に複数scheduleがあるとGitHub側で競合しやすいため)
+    - cron: "15,45 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ailab-news-notifier
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install feedparser deep-translator
+
+      - name: Run AIラボ notifier
+        env:
+          DISCORD_AILAB_WEBHOOK_OPENAI: ${{ secrets.DISCORD_AILAB_WEBHOOK_OPENAI }}
+          DISCORD_AILAB_WEBHOOK_CLAUDE: ${{ secrets.DISCORD_AILAB_WEBHOOK_CLAUDE }}
+          DISCORD_AILAB_WEBHOOK_GEMINI: ${{ secrets.DISCORD_AILAB_WEBHOOK_GEMINI }}
+          DISCORD_AILAB_WEBHOOK_XAI: ${{ secrets.DISCORD_AILAB_WEBHOOK_XAI }}
+          DISCORD_AILAB_WEBHOOK_COPILOT: ${{ secrets.DISCORD_AILAB_WEBHOOK_COPILOT }}
+          DISCORD_AILAB_WEBHOOK_META: ${{ secrets.DISCORD_AILAB_WEBHOOK_META }}
+          DISCORD_AILAB_WEBHOOK_CHINA: ${{ secrets.DISCORD_AILAB_WEBHOOK_CHINA }}
+          DISCORD_AILAB_WEBHOOK_LOCAL: ${{ secrets.DISCORD_AILAB_WEBHOOK_LOCAL }}
+          DISCORD_AILAB_WEBHOOK_IMGVID: ${{ secrets.DISCORD_AILAB_WEBHOOK_IMGVID }}
+          DISCORD_AILAB_WEBHOOK_AUDIO: ${{ secrets.DISCORD_AILAB_WEBHOOK_AUDIO }}
+          DISCORD_AILAB_WEBHOOK_TOOLS: ${{ secrets.DISCORD_AILAB_WEBHOOK_TOOLS }}
+          DISCORD_AILAB_WEBHOOK_PAPERS: ${{ secrets.DISCORD_AILAB_WEBHOOK_PAPERS }}
+          DISCORD_AILAB_WEBHOOK_GENERAL: ${{ secrets.DISCORD_AILAB_WEBHOOK_GENERAL }}
+          DISCORD_AILAB_WEBHOOK_RELEASE: ${{ secrets.DISCORD_AILAB_WEBHOOK_RELEASE }}
+          DISCORD_AILAB_WEBHOOK_WORLD: ${{ secrets.DISCORD_AILAB_WEBHOOK_WORLD }}
+        run: python ailab_news_bot.py
+
+      - name: Commit updated ailab_seen_urls.json (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ailab_seen_urls.json
+          git diff --staged --quiet || git commit -m "chore: update ailab_seen_urls.json"
+          git push
