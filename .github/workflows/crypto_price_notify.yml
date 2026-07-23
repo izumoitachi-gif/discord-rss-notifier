@@ -1,0 +1,25 @@
+name: 金融市場Bot Phase1(A案) BTC/ETH/SOL 5分ポーリング
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # GitHub Actions仕様上の最短間隔(これ未満はサイレントに無視される)
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: run
+        env:
+          MARKET_WEBHOOK_CRYPTO: ${{ secrets.MARKET_WEBHOOK_CRYPTO }}
+        run: python crypto_price_poll.py
+      - name: commit history file
+        run: |
+          git config user.name "market-crypto-bot"
+          git config user.email "actions@github.com"
+          git add crypto_price_history.json || true
+          git diff --staged --quiet || git commit -m "chore: update crypto_price_history.json [skip ci]"
+          git push || true
