@@ -289,6 +289,20 @@ def save_seen_news(s):
     io.open(SEEN_NEWS_FILE, "w", encoding="utf-8").write(
         json.dumps(sorted(list(s))[-MAX_NEWS_HISTORY:], ensure_ascii=False))
 
+# パパ要件5-37「まんべんなく1(BTC)/2(ETH)/3(SOL)を過剰にしない程度に速報」対応
+# 各銘柄に紐づく固有語で分類→各銘柄1〜2件+汎用速報1〜2件=合計最大6件に絞る
+SYMBOL_TERMS = {
+    "BTC": ["bitcoin", "btc", "ビットコイン"],
+    "ETH": ["ethereum", "eth", "vitalik", "イーサリアム", "イーサ"],
+    "SOL": ["solana", "sol", "ソラナ"],
+}
+def classify_symbol(text):
+    low = text.lower()
+    for sym, terms in SYMBOL_TERMS.items():
+        if any(t.lower() in low for t in terms):
+            return sym
+    return "OTHER"
+
 def is_breaking(title, summary=""):
     """速報キーワード含む記事だけ拾う=ノイズ回避"""
     text = f"{title} {summary}".lower()
@@ -298,8 +312,9 @@ def is_breaking(title, summary=""):
     return False, None
 
 def fetch_breaking_news(seen_news_urls):
-    """21RSS並列取得→速報キーワード含む未読記事だけリスト化"""
-    breaking = []
+    """21RSS並列取得→速報キーワード含む未読記事→BTC/ETH/SOLごとに割振
+    まんべんなく=各銘柄最大2件+汎用OTHER最大2件=合計最大6件"""
+    buckets = {"BTC": [], "ETH": [], "SOL": [], "OTHER": []}
     for src_name, src_url in CRYPTO_NEWS_SOURCES:
         try:
             req = urllib.request.Request(src_url, headers={"User-Agent": UA})
@@ -313,27 +328,33 @@ def fetch_breaking_news(seen_news_urls):
                 summary = (e.get("summary", "") or e.get("description", "") or "")[:200]
                 hit, matched_term = is_breaking(title, summary)
                 if hit:
-                    breaking.append({
+                    sym = classify_symbol(f"{title} {summary}")
+                    buckets[sym].append({
                         "source": src_name, "title": title, "link": link,
-                        "matched": matched_term
+                        "matched": matched_term, "symbol": sym
                     })
         except Exception as ex:
             print(f"  RSS取得失敗: {src_name} - {ex}")
-    return breaking
+    # まんべんなく取る: 各銘柄2件+OTHER 2件=最大6件・過剰にならず速報っぽい頻度
+    picked = []
+    for sym in ["BTC", "ETH", "SOL", "OTHER"]:
+        picked.extend(buckets[sym][:2])
+    return picked[:6]
 
+SYMBOL_EMOJI = {"BTC": "₿", "ETH": "Ξ", "SOL": "◎", "OTHER": "⚡"}
 def post_breaking(webhook_url, items):
-    """速報を最大10件までEmbedで即Push(タイトル日本語化)"""
+    """速報Embed即Push(タイトル日本語化+銘柄バッジ付き)"""
     if not items:
         return None
     embeds = []
-    for it in items[:10]:
-        # 英語タイトルは日本語化(is_ja判定でスキップされる日本語タイトルはそのまま)
+    for it in items:
         ja_title = to_ja(it["title"])
+        badge = SYMBOL_EMOJI.get(it.get("symbol","OTHER"), "⚡")
         embeds.append({
-            "title": f"⚡ {ja_title[:200]}",
+            "title": f"{badge} {ja_title[:200]}",
             "url": it["link"],
             "color": COL_FLASH,
-            "footer": {"text": f"{it['source']} / 速報検知: {it['matched']} / 紅月市場MS"},
+            "footer": {"text": f"{it['source']} / 速報: {it['matched']} / 紅月市場MS"},
         })
     body = {"content": f"**⚡ 暗号資産速報 {len(items)}件** (動いた瞬間検知・21RSS並列)", "embeds": embeds}
     req = urllib.request.Request(webhook_url, data=json.dumps(body, ensure_ascii=False).encode(),
@@ -373,18 +394,31 @@ def main():
     save_history(hist)
     print("履歴保存完了")
 
-    # --- パパ要件5-32「動いた瞬間・数百のうちの速報」対応: 21RSSから速報検知push ---
+    # --- パパ要件5-32/5-37「まんべんなくBTC/ETH/SOL速報」対応: 21RSSから銘柄別バランス配信 ---
     seen_news = load_seen_news()
     breaking = fetch_breaking_news(seen_news)
     if breaking:
-        print(f"速報{len(breaking)}件検出: {[b['source'] for b in breaking]}")
-        st = post_breaking(url, breaking)
-        print(f"速報投稿: {st}")
+        by_sym = {}
+        for b in breaking:
+            by_sym[b['symbol']] = by_sym.get(b['symbol'], 0) + 1
+        print(f"速報{len(breaking)}件検出 (銘柄別: {by_sym})")
+        header = f"**⚡ 暗号資産速報 {len(breaking)}件** (BTC/ETH/SOL/汎用まんべんなく)"
+        body = {"content": header,
+                "embeds": [{"title": f"{SYMBOL_EMOJI.get(b.get('symbol','OTHER'),'⚡')} {to_ja(b['title'])[:200]}",
+                             "url": b["link"], "color": COL_FLASH,
+                             "footer": {"text": f"{b['source']} / 速報: {b['matched']} / 紅月市場MS"}}
+                            for b in breaking]}
+        req = urllib.request.Request(url, data=json.dumps(body, ensure_ascii=False).encode(),
+            headers={"Content-Type": "application/json", "User-Agent": UA}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                print(f"速報投稿: {r.status}")
+        except urllib.error.HTTPError as e:
+            print(f"速報投稿失敗: {e.code} {e.read().decode('utf-8','replace')[:100]}")
         for b in breaking:
             seen_news.add(b["link"])
-        save_seen_news(seen_news)
     else:
-        print("速報なし(21RSS走査済み)")
+        print("速報なし(21RSS走査済み・過去SEEN含む)")
     save_seen_news(seen_news)
 
 if __name__ == "__main__":
