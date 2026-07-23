@@ -1,0 +1,36 @@
+name: Crypto Bridge trigger kurenai-crypto-market
+
+on:
+  # 既存workflow衝突回避: IC倶楽部(5,35) / AIラボ(15,45) / market_notify(25,55) と 4,14,24,34,44,54 でずらす
+  schedule:
+    - cron: "4,14,24,34,44,54 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crypto-bridge
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch kurenai-crypto-market 6 workflows
+        env:
+          GH_PAT: ${{ secrets.CROSS_REPO_PAT }}
+        run: |
+          set +e
+          REPO="izumoitachi-gif/kurenai-crypto-market"
+          for wf in crypto_price_notify.yml crypto_flash_A.yml crypto_flash_B.yml crypto_flash_C.yml crypto_flash_D.yml crypto_debug_late.yml; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/actions/workflows/$wf/dispatches" \
+              -d '{"ref":"main"}')
+            echo "bridge [$code] $wf"
+            sleep 2
+          done
