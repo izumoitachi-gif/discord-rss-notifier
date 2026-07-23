@@ -1,10 +1,16 @@
 name: 金融市場Bot Phase1 BTC/ETH/SOL 5分ポーリング+21RSS速報検知
 
 on:
+  # 複数cron冗長化(Late Slot対策)+workflow_runで動いてるBot完了時にも後押し発火
+  # 重複排除(crypto_seen_news.json+URL dedup)で二重投稿ゼロ保証
   schedule:
-    # 2,7,12,17,22,27,32,37,42,47,52,57分。他workflowと衝突しない奇数寄り時刻
-    - cron: "2-59/5 * * * *"
+    - cron: "2-59/5 * * * *"      # メイン(5分間隔奇数寄り)
+    - cron: "1,11,21,31,41,51 * * * *"  # 冗長1(1分から10分間隔)
+    - cron: "0 */2 * * *"         # 冗長2(2時間毎の最終保険)
   workflow_dispatch: {}
+  workflow_run:
+    workflows: ["IC Club 5-Category News Notifier", "AIラボ 15分類 AI News Notifier"]
+    types: [completed]
 
 permissions:
   contents: write

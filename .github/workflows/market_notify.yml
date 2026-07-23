@@ -1,10 +1,16 @@
 name: 金融市場Bot Phase2/3 開示・政策・SEC速報
 
 on:
+  # 複数cron冗長化(Late Slot対策)+workflow_runで動いてるBot完了時にも後押し発火
+  # 重複排除(market_seen_urls.json+canonical_title+投稿間類似度チェック)で二重投稿ゼロ保証
   schedule:
-    # 25分・55分。ic_club_notify.yml(5,35)・ailab_news_notify.yml(15,45)とcron時刻を意図的にずらしている
-    - cron: "25,55 * * * *"
+    - cron: "25,55 * * * *"       # メイン(IC5,35/AI15,45と衝突しない25,55)
+    - cron: "8,38 * * * *"        # 冗長1(全ての他Botとも8,38で衝突ゼロ)
+    - cron: "0 */3 * * *"         # 冗長2(3時間毎の最終保険)
   workflow_dispatch: {}
+  workflow_run:
+    workflows: ["IC Club 5-Category News Notifier", "AIラボ 15分類 AI News Notifier"]
+    types: [completed]
 
 permissions:
   contents: write
