@@ -1,0 +1,6 @@
+{"type": "no_schedule_at_all", "workflow": "crypto_price_notify", "detail": "scheduled event=schedule のrunが0件・cron発火してない", "ts_utc": 1784785853}
+{"type": "stagnation", "workflow": "market_notify", "detail": "最新schedule発火から70分経過(閾値45分)", "last_schedule_at": "2026-07-23T04:40:08Z", "ts_utc": 1784785853}
+{"type": "no_schedule_at_all", "workflow": "crypto_flash_A", "detail": "scheduled event=schedule のrunが0件・cron発火してない", "ts_utc": 1784785854}
+{"type": "no_schedule_at_all", "workflow": "crypto_flash_B", "detail": "scheduled event=schedule のrunが0件・cron発火してない", "ts_utc": 1784785854}
+{"type": "no_schedule_at_all", "workflow": "crypto_flash_C", "detail": "scheduled event=schedule のrunが0件・cron発火してない", "ts_utc": 1784785854}
+{"type": "no_schedule_at_all", "workflow": "crypto_flash_D", "detail": "scheduled event=schedule のrunが0件・cron発火してない", "ts_utc": 1784785854}
