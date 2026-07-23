@@ -1,7 +1,7 @@
-name: 金融市場Bot Phase1(A案) BTC/ETH/SOL 5分ポーリング
+name: 金融市場Bot Phase1(A案v2) BTC/ETH/SOL 1時間ポーリング
 on:
   schedule:
-    - cron: '*/5 * * * *'   # GitHub Actions仕様上の最短間隔(これ未満はサイレントに無視される)
+    - cron: '0 * * * *'   # 毎時0分(投稿頻度を下げる・パパ指摘対応)
   workflow_dispatch:
 permissions:
   contents: write
@@ -12,6 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
+      - run: pip install feedparser
       - name: run
         env:
           MARKET_WEBHOOK_CRYPTO: ${{ secrets.MARKET_WEBHOOK_CRYPTO }}
