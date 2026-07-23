@@ -1,0 +1,45 @@
+name: 金融市場Bot 段階1 検知デバッグ Late Slot可視化
+
+on:
+  # 15分毎(cron他Botと衝突しない13,28,43,58)
+  schedule:
+    - cron: "13,28,43,58 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crypto-debug-late
+  cancel-in-progress: false
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run debug late slot detector
+        env:
+          MARKET_WEBHOOK_SOURCELOG: ${{ secrets.MARKET_WEBHOOK_SOURCELOG }}
+        run: python crypto_debug_late.py
+
+      - name: Commit updated debug log (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add crypto_debug_late.jsonl
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update crypto_debug_late.jsonl"
+          for i in 1 2 3; do
+            git pull --rebase origin main || true
+            git push && break
+            echo "Push retry $i"
+            sleep 3
+          done
