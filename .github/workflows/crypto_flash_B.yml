@@ -1,0 +1,49 @@
+name: 金融市場Bot 段階2 暗号速報 Group B
+
+on:
+  # 15分毎(他フックと3分オフセット・cron衝突ゼロ)
+  schedule:
+    - cron: "6,21,36,51 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crypto-flash-B
+  cancel-in-progress: false
+
+jobs:
+  flash:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install feedparser
+
+      - name: Run crypto flash Group B
+        env:
+          MARKET_WEBHOOK_CRYPTO: ${{ secrets.MARKET_WEBHOOK_CRYPTO }}
+          FLASH_GROUP: "B"
+        run: python crypto_flash.py
+
+      - name: Commit updated crypto_seen_news.json (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add crypto_seen_news.json
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update crypto_seen_news.json (flash-B)"
+          for i in 1 2 3; do
+            git pull --rebase origin main || true
+            git push && break
+            echo "Push retry $i"
+            sleep 3
+          done
