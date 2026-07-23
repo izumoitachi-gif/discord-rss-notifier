@@ -1,5 +1,5 @@
 name: 金融市場Bot Phase2/3 開示・政策・SEC速報
-on:
+on:  # 2026-07-23 schedule re-register(GitHub cron認識ラグ回避のためのdummy touch)
   schedule:
     - cron: '25,55 * * * *'
   workflow_dispatch:

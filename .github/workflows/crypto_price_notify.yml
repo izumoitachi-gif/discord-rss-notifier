@@ -1,5 +1,5 @@
 name: 金融市場Bot Phase1(A案v2) BTC/ETH/SOL 1時間ポーリング
-on:
+on:  # 2026-07-23 schedule re-register(GitHub cron認識ラグ回避のためのdummy touch)
   schedule:
     - cron: '0 * * * *'   # 毎時0分(投稿頻度を下げる・パパ指摘対応)
   workflow_dispatch:
