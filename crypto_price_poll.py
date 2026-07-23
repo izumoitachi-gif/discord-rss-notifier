@@ -254,6 +254,31 @@ def post_webhook(url, embeds):
                 continue
             return f"{e.code}:{e.read().decode('utf-8','replace')[:150]}"
 
+# ---- 日本語化(market_news_bot.pyから移植・sl=en強制でGoogle翻訳誤判定回避) ----
+import re
+_JP_RE = re.compile(r"[ぁ-んァ-ヶ一-龠]")
+_TR_FAIL_STREAK = 0
+_TR_MAX = 3
+def is_ja(t):
+    if not t: return True
+    return len(_JP_RE.findall(t)) >= max(3, int(len(t) * 0.12))
+def to_ja(text):
+    global _TR_FAIL_STREAK
+    if not text or is_ja(text): return text
+    if _TR_FAIL_STREAK >= _TR_MAX: return text
+    try:
+        url = "https://translate.googleapis.com/translate_a/single?" + urllib.parse.urlencode({
+            "client": "gtx", "sl": "en", "tl": "ja", "dt": "t", "q": text[:4800]
+        })
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        _TR_FAIL_STREAK = 0
+        return "".join(seg[0] for seg in data[0] if seg and seg[0]) or text
+    except Exception:
+        _TR_FAIL_STREAK += 1
+        return text
+
 def load_seen_news():
     try:
         return set(json.load(io.open(SEEN_NEWS_FILE, encoding="utf-8")))
@@ -297,13 +322,15 @@ def fetch_breaking_news(seen_news_urls):
     return breaking
 
 def post_breaking(webhook_url, items):
-    """速報を最大10件までEmbedで即Push"""
+    """速報を最大10件までEmbedで即Push(タイトル日本語化)"""
     if not items:
         return None
     embeds = []
     for it in items[:10]:
+        # 英語タイトルは日本語化(is_ja判定でスキップされる日本語タイトルはそのまま)
+        ja_title = to_ja(it["title"])
         embeds.append({
-            "title": f"⚡ {it['title'][:200]}",
+            "title": f"⚡ {ja_title[:200]}",
             "url": it["link"],
             "color": COL_FLASH,
             "footer": {"text": f"{it['source']} / 速報検知: {it['matched']} / 紅月市場MS"},
