@@ -4,7 +4,7 @@ on:
   # 複数cron冗長化(Late Slot対策)+workflow_runで動いてるBot完了時にも後押し発火
   # 重複排除(crypto_seen_news.json+URL dedup)で二重投稿ゼロ保証
   schedule:
-    - cron: "2-59/5 * * * *"      # メイン(5分間隔奇数寄り)
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"      # メイン(5分間隔奇数寄り・カンマ列挙で動いてる4workflowと同記法に統一)
     - cron: "1,11,21,31,41,51 * * * *"  # 冗長1(1分から10分間隔)
     - cron: "0 */2 * * *"         # 冗長2(2時間毎の最終保険)
   workflow_dispatch: {}
