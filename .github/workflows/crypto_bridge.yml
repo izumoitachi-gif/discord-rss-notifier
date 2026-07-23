@@ -5,6 +5,13 @@ on:
   schedule:
     - cron: "4,14,24,34,44,54 * * * *"
   workflow_dispatch:
+  # 既存workflow完了時にも便乗発火(Layer3+scheduleの冗長化)=IC倶楽部/AIラボ/marketが動くたびcrypto系も叩く
+  workflow_run:
+    workflows:
+      - "IC Club 5-Category News Notifier"
+      - "AIラボ 15分類 AI News Notifier"
+      - "金融市場Bot Phase2/3 開示・政策・SEC速報"
+    types: [completed]
 
 permissions:
   contents: read
