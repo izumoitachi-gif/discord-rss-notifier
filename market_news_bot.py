@@ -113,6 +113,41 @@ def canonical_title(title):
     t = re.sub(r"\s*（[^）]{2,50}）\s*$", "", t)
     return re.sub(r"\s+", " ", t).strip().lower()
 
+# ---- 日本語化（ailab_news_bot.pyから移植・英語タイトル/要約をGoogle翻訳で和訳・失敗時は原文）----
+# SEC/Fed/ECBは英語のまま来るため必須。ailab_news_bot.pyと同じソケットレベルtimeout＋回路遮断方式。
+_JP_RE = re.compile(r"[ぁ-んァ-ヶ一-龠]")
+_TR_FAIL_STREAK = 0
+_TR_TIMEOUT_SEC = 6
+_TR_MAX_FAIL_STREAK = 3
+
+def is_ja(t):
+    if not t: return True
+    return len(_JP_RE.findall(t)) >= max(3, int(len(t) * 0.12))
+
+def _gtranslate(text, timeout):
+    url = "https://translate.googleapis.com/translate_a/single?" + urllib.parse.urlencode({
+        "client": "gtx", "sl": "auto", "tl": "ja", "dt": "t", "q": text[:4800]
+    })
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return "".join(seg[0] for seg in data[0] if seg and seg[0])
+
+def to_ja(t):
+    global _TR_FAIL_STREAK
+    if not t or is_ja(t): return t
+    if _TR_FAIL_STREAK >= _TR_MAX_FAIL_STREAK:
+        return t
+    try:
+        result = _gtranslate(t, _TR_TIMEOUT_SEC)
+        _TR_FAIL_STREAK = 0
+        return result or t
+    except Exception:
+        _TR_FAIL_STREAK += 1
+        if _TR_FAIL_STREAK >= _TR_MAX_FAIL_STREAK:
+            print(f"    翻訳サーバー応答なし({_TR_TIMEOUT_SEC}s×{_TR_MAX_FAIL_STREAK}回連続) → 以後は原文のまま投稿")
+        return t
+
 def load_webhooks():
     m = {}
     for k, v in os.environ.items():
@@ -236,6 +271,7 @@ def main():
         picked = collect_topic_items(t, seen)
         if not picked:
             print(f"{t['num']} {t['name']} … 新規なし"); continue
+        picked = [(to_ja(ti), li, to_ja(su), sr) for (ti, li, su, sr) in picked]  # 英語→日本語（失敗時は原文）
         st = post(url, f"**{t['num']}｜{t['name']}**", picked, t["color"])
         for _, link, _, _ in picked: seen.add(link)
         print(f"{t['num']} {t['name']} … {len(picked)}件 ({st})")
