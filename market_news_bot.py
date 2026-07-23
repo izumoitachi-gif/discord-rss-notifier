@@ -73,12 +73,17 @@ def gn(q, include=None, exclude=None, label=None, title_include=None, title_excl
 # 「生活意識アンケート」等の日次ノイズが混ざる)
 BOJ_POLICY_TERMS = ["金融政策決定会合", "決定会合", "総裁", "副総裁", "展望レポート",
                      "短観", "金融システムレポート", "介入", "利上げ", "利下げ",
-                     "無担保コール", "指値オペ", "国債買入(通知)"]
-# ECB Press全般が入る枠でECB内広報インタビュー等のノイズを除外
+                     "無担保コール", "指値オペ", "国債買入", "国債", "金利",
+                     "マイナス金利", "イールドカーブコントロール", "YCC", "植田",
+                     "金融政策", "オペ", "リスク", "経済・物価情勢",
+                     "資金供給", "資金吸収", "為替", "円安", "円高"]
+# ECB Press全般が入る枠でECB内広報インタビュー等のノイズを除外(2026-07-23 パパ指摘で緩和拡張)
 ECB_MACRO_TERMS = ["monetary policy", "interest rate", "policy rate", "inflation",
                     "outlook", "governing council", "Christine Lagarde", "de Guindos",
+                    "Fabio Panetta", "Isabel Schnabel", "President", "keynote",
+                    "financial stability", "supervisor", "banks", "eurozone",
                     "銀行融資調査", "金融安定", "TLTRO", "APP", "PEPP", "リーガーデ",
-                    "利上げ", "利下げ", "金融政策"]
+                    "利上げ", "利下げ", "金融政策", "ユーロ", "欧州"]
 
 # ---- Phase 3: 世界市場（クロスアセット・リスク選好・地政学）2026-07-23追加 ----
 # パパ指摘「世界市場動いてない、RSSと絞り込みが足りない」→ 激裏カタログ(自分\激裏 ニュース・情報源
@@ -86,10 +91,17 @@ ECB_MACRO_TERMS = ["monetary policy", "interest rate", "policy rate", "inflation
 # BBC/AlJazeera/DW/France24/CNN/NYTは全世界ニュース全般のフィードなのでtitle_includeで
 # 市場語に絞り込む。Reuters公式RSSは廃止済みのためGoogle News経由(site:reuters.com)で代替。
 WORLD_MARKET_TERMS = ["market", "markets", "stocks", "stock", "index", "indices", "S&P", "Nasdaq",
-                      "Dow Jones", "dollar", "yen", "yuan", "euro", "pound", "bond", "bonds", "yield",
-                      "yields", "rate hike", "rate cut", "interest rate", "inflation", "recession",
-                      "GDP", "trade war", "tariff", "tariffs", "oil price", "crude", "gold price",
-                      "risk-off", "risk-on", "sell-off", "selloff", "rally", "volatility", "股", "相場"]
+                      "Dow Jones", "Dow", "dollar", "yen", "yuan", "euro", "pound", "bond", "bonds",
+                      "yield", "yields", "rate hike", "rate cut", "interest rate", "inflation",
+                      "recession", "GDP", "trade war", "tariff", "tariffs", "oil price", "oil",
+                      "crude", "gold price", "gold", "silver", "energy", "gas prices",
+                      "risk-off", "risk-on", "sell-off", "selloff", "rally", "volatility",
+                      "OPEC", "FOMC", "Fed", "CPI", "PPI", "jobless", "unemployment", "payrolls",
+                      "earnings", "revenue", "guidance", "IPO", "M&A", "buyback", "dividend",
+                      "treasury", "treasuries", "Trump", "Powell", "Lagarde", "BoJ", "ECB",
+                      "futures", "commodities", "gains", "losses", "surge", "plunge", "slump",
+                      "shares", "equities", "trader", "traders", "wall street",
+                      "株", "相場", "為替", "円高", "円安", "日経", "ダウ", "利上げ", "利下げ"]
 
 TSE_TITLE_EXCLUDE = [
     # ETF/月次ルーチン開示のみ弾く。譲渡制限付株式/払込完了は重要度あり残す
@@ -110,7 +122,8 @@ TOPICS = [
         rss("https://www.federalreserve.gov/feeds/press_all.xml",
             # Fed press全部は多すぎる(執行措置・支店人事等)ので金融政策・規制関連に絞る
             title_include=["Federal Reserve", "monetary", "FOMC", "interest rate", "rate decision",
-                            "outlook", "Powell", "vice chair", "policy statement",
+                            "outlook", "Powell", "vice chair", "policy statement", "financial stability",
+                            "beige book", "dot plot", "discount rate", "swap line", "reserve requirements",
                             "利上げ", "利下げ", "金融政策"],
             title_exclude=["enforcement action", "consent order", "取締役会の割引率会議"],
             label="Federal Reserve Press Releases"),
@@ -120,17 +133,29 @@ TOPICS = [
             title_include=BOJ_POLICY_TERMS, label="日本銀行 新着情報"),
         rss("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=40&output=atom",
             label="SEC EDGAR 8-K (getcurrent)"),
+        # 2026-07-23 政策系速報追加(MarketWatch top/FT markets は金融政策・中銀話題を扱う)
+        rss("https://feeds.content.dowjones.io/public/rss/mw_topstories",
+            title_include=["Fed", "FOMC", "rate", "central bank", "monetary", "policy", "Treasury",
+                            "Powell", "Lagarde", "BoJ", "ECB", "inflation", "CPI"],
+            label="MarketWatch Top(政策)"),
+        rss("https://www.ft.com/markets?format=rss",
+            title_include=["Fed", "FOMC", "rate", "central bank", "monetary", "policy", "Treasury",
+                            "Powell", "Lagarde", "BoJ", "ECB", "inflation", "CPI", "yields", "bonds"],
+            label="FT Markets(政策)"),
     ]},
     {"num": "①", "name": "世界市場速報", "env": "WORLD", "color": 0x00E5FF, "per_channel": 8, "sources": [
         gn('(world markets OR stock market OR risk sentiment OR global economy) (乱高下 OR 急落 OR 急騰 OR 波乱 OR 動向)',
            label="Google News（世界市場）"),
         gn('site:reuters.com (market OR markets OR stocks OR economy)', label="Reuters（Google News経由）"),
         rss("https://feeds.bbci.co.uk/news/business/rss.xml", title_include=WORLD_MARKET_TERMS, label="BBC Business"),
-        rss("https://www.aljazeera.com/xml/rss/all.xml", title_include=WORLD_MARKET_TERMS, label="Al Jazeera"),
-        rss("https://rss.dw.com/rdf/rss-en-all", title_include=WORLD_MARKET_TERMS, label="Deutsche Welle"),
-        rss("https://www.france24.com/en/rss", title_include=WORLD_MARKET_TERMS, label="France24"),
-        rss("http://rss.cnn.com/rss/edition.rss", title_include=WORLD_MARKET_TERMS, label="CNN"),
-        rss("https://rss.nytimes.com/services/xml/rss/nyt/World.xml", title_include=WORLD_MARKET_TERMS, label="NYT World"),
+        # 2026-07-23 市場専用RSS 5本追加(パパ指摘「general newsだとフィルタで全弾かれる」対策・実応答生存確認済み)
+        # title_include付けず全件取得→per_channel(=8件)で自然にフィルタ
+        rss("https://www.cnbc.com/id/15839069/device/rss/rss.html", label="CNBC Markets"),
+        rss("https://www.cnbc.com/id/100727362/device/rss/rss.html", label="CNBC World Business"),
+        rss("https://finance.yahoo.com/news/rssindex", label="Yahoo Finance"),
+        rss("https://feeds.content.dowjones.io/public/rss/mw_marketpulse", label="MarketWatch MarketPulse"),
+        rss("https://www.investing.com/rss/news_25.rss", label="Investing.com Stocks"),
+        # Al Jazeera/DW/France24/CNN/NYT World は general news で10件中0件通過だったため削除(2026-07-23 パパ指摘)
     ]},
 ]
 
