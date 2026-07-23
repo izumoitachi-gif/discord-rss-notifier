@@ -1,26 +1,43 @@
-name: 金融市場Bot Phase1(A案v3) BTC/ETH/SOL 5分ポーリング+21RSS速報検知
-on:  # schedule re-register(GitHub cron認識ラグ回避のためのdummy touch)
+name: 金融市場Bot Phase1 BTC/ETH/SOL 5分ポーリング+21RSS速報検知
+
+on:
   schedule:
-    - cron: '2-59/5 * * * *'   # 5分間隔(2-59/5:過去事件の教訓で他workflowと衝突しない奇数時刻に)・パパ要件5-32「動いた瞬間」対応
-  workflow_dispatch:
+    # 2,7,12,17,22,27,32,37,42,47,52,57分。ic_club(5,35)・ailab(15,45)・market(25,55)と衝突しない奇数寄り時刻
+    # (同一リポジトリで同時刻に複数scheduleがあるとGitHub側で競合しやすいため・過去事件教訓)
+    - cron: "2-59/5 * * * *"
+  workflow_dispatch: {}
+
 permissions:
   contents: write
+
+concurrency:
+  group: crypto-price-notifier
+  cancel-in-progress: false
+
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - run: pip install feedparser
-      - name: run
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install feedparser
+
+      - name: Run crypto price notifier
         env:
           MARKET_WEBHOOK_CRYPTO: ${{ secrets.MARKET_WEBHOOK_CRYPTO }}
         run: python crypto_price_poll.py
-      - name: commit history+seen files
+
+      - name: Commit updated history+seen files (if changed)
         run: |
-          git config user.name "market-crypto-bot"
-          git config user.email "actions@github.com"
-          git add crypto_price_history.json crypto_seen_news.json || true
-          git diff --staged --quiet || git commit -m "chore: update crypto history+seen_news [skip ci]"
-          git push || true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add crypto_price_history.json crypto_seen_news.json
+          git diff --staged --quiet || git commit -m "chore: update crypto history+seen_news"
+          git push
