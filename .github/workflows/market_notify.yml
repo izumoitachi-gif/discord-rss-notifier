@@ -18,11 +18,11 @@ jobs:
           MARKET_WEBHOOK_TSE: ${{ secrets.MARKET_WEBHOOK_TSE }}
           MARKET_WEBHOOK_MACRO: ${{ secrets.MARKET_WEBHOOK_MACRO }}
           MARKET_WEBHOOK_SOURCELOG: ${{ secrets.MARKET_WEBHOOK_SOURCELOG }}
-        run: python github_actions_repo/market_news_bot.py
+        run: python market_news_bot.py
       - name: commit seen file
         run: |
           git config user.name "market-news-bot"
           git config user.email "actions@github.com"
-          git add github_actions_repo/market_seen_urls.json || true
+          git add market_seen_urls.json || true
           git diff --staged --quiet || git commit -m "chore: update market_seen_urls.json [skip ci]"
           git push || true
