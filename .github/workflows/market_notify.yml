@@ -3,7 +3,6 @@ name: 金融市場Bot Phase2/3 開示・政策・SEC速報
 on:
   schedule:
     # 25分・55分。ic_club_notify.yml(5,35)・ailab_news_notify.yml(15,45)とcron時刻を意図的にずらしている
-    # (同一リポジトリで同時刻に複数scheduleがあるとGitHub側で競合しやすいため)
     - cron: "25,55 * * * *"
   workflow_dispatch: {}
 
@@ -42,5 +41,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add market_seen_urls.json
-          git diff --staged --quiet || git commit -m "chore: update market_seen_urls.json"
-          git push
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update market_seen_urls.json"
+          for i in 1 2 3; do
+            git pull --rebase origin main || true
+            git push && break
+            echo "Push retry $i"
+            sleep 3
+          done

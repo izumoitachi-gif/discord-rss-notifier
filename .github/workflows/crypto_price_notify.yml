@@ -2,8 +2,7 @@ name: 金融市場Bot Phase1 BTC/ETH/SOL 5分ポーリング+21RSS速報検知
 
 on:
   schedule:
-    # 2,7,12,17,22,27,32,37,42,47,52,57分。ic_club(5,35)・ailab(15,45)・market(25,55)と衝突しない奇数寄り時刻
-    # (同一リポジトリで同時刻に複数scheduleがあるとGitHub側で競合しやすいため・過去事件教訓)
+    # 2,7,12,17,22,27,32,37,42,47,52,57分。他workflowと衝突しない奇数寄り時刻
     - cron: "2-59/5 * * * *"
   workflow_dispatch: {}
 
@@ -39,5 +38,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add crypto_price_history.json crypto_seen_news.json
-          git diff --staged --quiet || git commit -m "chore: update crypto history+seen_news"
-          git push
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update crypto history+seen_news"
+          for i in 1 2 3; do
+            git pull --rebase origin main || true
+            git push && break
+            echo "Push retry $i"
+            sleep 3
+          done
