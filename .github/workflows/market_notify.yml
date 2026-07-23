@@ -1,0 +1,28 @@
+name: 金融市場Bot Phase2/3 開示・政策・SEC速報
+on:
+  schedule:
+    - cron: '25,55 * * * *'   # IC倶楽部(5,35)・AIラボ(15,45)と衝突しない毎時25分・55分
+  workflow_dispatch:           # 手動実行ボタン
+permissions:
+  contents: write              # market_seen_urls.json をコミットで永続化
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install feedparser
+      - name: run
+        env:
+          MARKET_WEBHOOK_TSE: ${{ secrets.MARKET_WEBHOOK_TSE }}
+          MARKET_WEBHOOK_MACRO: ${{ secrets.MARKET_WEBHOOK_MACRO }}
+          MARKET_WEBHOOK_SOURCELOG: ${{ secrets.MARKET_WEBHOOK_SOURCELOG }}
+        run: python github_actions_repo/market_news_bot.py
+      - name: commit seen file
+        run: |
+          git config user.name "market-news-bot"
+          git config user.email "actions@github.com"
+          git add github_actions_repo/market_seen_urls.json || true
+          git diff --staged --quiet || git commit -m "chore: update market_seen_urls.json [skip ci]"
+          git push || true
