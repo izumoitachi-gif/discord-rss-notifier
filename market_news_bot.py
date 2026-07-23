@@ -69,8 +69,16 @@ def gn(q, include=None, exclude=None, label=None, title_include=None, title_excl
             "label": label, "title_include": title_include or [], "title_exclude": title_exclude or []}
 
 # ---- Phase 2: 一次開示・中銀政策（設計§7.2 DISCLOSURE_IMMEDIATE / MACRO_RELEASE準拠）----
-BOJ_POLICY_TERMS = ["金融政策", "決定会合", "総裁", "副総裁", "講演", "為替", "国債買入", "オペ", "展望レポート",
-                     "生活意識", "短観", "金融システムレポート", "金融政策決定会合"]
+# 「金融政策決定会合」「総裁講演」「為替介入」等の重要イベントだけ通す(緩めると「オペ結果」
+# 「生活意識アンケート」等の日次ノイズが混ざる)
+BOJ_POLICY_TERMS = ["金融政策決定会合", "決定会合", "総裁", "副総裁", "展望レポート",
+                     "短観", "金融システムレポート", "介入", "利上げ", "利下げ",
+                     "無担保コール", "指値オペ", "国債買入(通知)"]
+# ECB Press全般が入る枠でECB内広報インタビュー等のノイズを除外
+ECB_MACRO_TERMS = ["monetary policy", "interest rate", "policy rate", "inflation",
+                    "outlook", "governing council", "Christine Lagarde", "de Guindos",
+                    "銀行融資調査", "金融安定", "TLTRO", "APP", "PEPP", "リーガーデ",
+                    "利上げ", "利下げ", "金融政策"]
 
 # ---- Phase 3: 世界市場（クロスアセット・リスク選好・地政学）2026-07-23追加 ----
 # パパ指摘「世界市場動いてない、RSSと絞り込みが足りない」→ 激裏カタログ(自分\激裏 ニュース・情報源
@@ -83,16 +91,31 @@ WORLD_MARKET_TERMS = ["market", "markets", "stocks", "stock", "index", "indices"
                       "GDP", "trade war", "tariff", "tariffs", "oil price", "crude", "gold price",
                       "risk-off", "risk-on", "sell-off", "selloff", "rally", "volatility", "股", "相場"]
 
+TSE_TITLE_EXCLUDE = [
+    "日々の開示事項",  # ETF日次開示ラッシュ(1日100件超)
+    "運用実績", "月次運用", "月次資産運用",
+    "投資証券に係る", "ETFの収益分配金",
+    "譲渡制限付株式",  # 譲渡制限付株式報酬/としての自己株式処分等の派生パターンを全部除外
+    "の払込完了に関するお知らせ",  # 各種払込完了ルーチン開示
+    "の一部変更に関するお知らせ",  # 軽微変更のお知らせ
+]
+
 TOPICS = [
     {"num": "④", "name": "TSE適時開示", "env": "TSE", "color": COL_TSE, "per_channel": 12, "sources": [
         rss("https://webapi.yanoshin.jp/webapi/tdnet/list/recent.rss",
+            title_exclude=TSE_TITLE_EXCLUDE,
             label="TDnet（やのしんWEB-API）"),
     ]},
     {"num": "②/⑤", "name": "中銀・政策・SEC速報", "env": "MACRO", "color": COL_MACRO, "per_channel": 8, "sources": [
         rss("https://www.federalreserve.gov/feeds/press_all.xml",
+            # Fed press全部は多すぎる(執行措置・支店人事等)ので金融政策・規制関連に絞る
+            title_include=["Federal Reserve", "monetary", "FOMC", "interest rate", "rate decision",
+                            "outlook", "Powell", "vice chair", "policy statement",
+                            "利上げ", "利下げ", "金融政策"],
+            title_exclude=["enforcement action", "consent order", "取締役会の割引率会議"],
             label="Federal Reserve Press Releases"),
         rss("https://www.ecb.europa.eu/rss/press.html",
-            label="ECB Press"),
+            title_include=ECB_MACRO_TERMS, label="ECB Press"),
         rss("https://www.boj.or.jp/rss/whatsnew.xml",
             title_include=BOJ_POLICY_TERMS, label="日本銀行 新着情報"),
         rss("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=40&output=atom",
@@ -135,9 +158,13 @@ def contains_any(text, terms):
     return False
 
 def canonical_title(title):
-    t = re.sub(r"\s+-\s+[^|]+(?:\s+\|.*)?$", "", title or "")
+    # 末尾の発行元表記(- ロイター/- Reuters/- BBC等)を全部剥がす→dedupが効く
+    t = re.sub(r"\s+-\s+[^-|｜]+$", "", title or "")
     t = re.sub(r"\s*\([^)]{2,50}\)\s*$", "", t)
     t = re.sub(r"\s*（[^）]{2,50}）\s*$", "", t)
+    # 記号ゆらぎ吸収
+    t = t.replace("　", " ").replace("’", "'").replace("’", "'")
+    t = re.sub(r"[「」『』\"'“”]", "", t)
     return re.sub(r"\s+", " ", t).strip().lower()
 
 # ---- 日本語化（ailab_news_bot.pyから移植・英語タイトル/要約をGoogle翻訳で和訳・失敗時は原文）----
@@ -243,6 +270,7 @@ def fetch(src):
 # 呼び出し頻度を絞るため、TSE以外(=英語ニュース中心)かつsummary空の記事だけに適用する。
 _REASON_FAIL_STREAK = 0
 _REASON_MAX_FAIL = 3
+_REASON_USED_HINTS = set()  # 同一ヒントを同一ジャンル内で二重に使わない
 _STOP_WORDS = {"the","and","for","with","from","that","this","have","has","was","are","been",
                "will","its","not","new","one","two","2026","2025"}
 def _extract_keywords(title):
@@ -260,6 +288,25 @@ def fetch_reason_hint(title, timeout=8):
     if not keywords:
         return ""
     # 2段構え検索: ①AND2件必須で高精度に取る ②見つからなければ緩めて1件必須で再検索
+    # 「無関係キーワードが混入した瞬間NG」判定用の禁止語(=直近ノイズ実例)
+    NOISE_TERMS = ["気候変動", "熱波", "山火事", "会計調査", "K-POP", "解散",
+                    "grieve", "追悼", "訃報", "死去", "訳:",
+                    "オークション", "紙幣", "auction", "auctioned",
+                    "サンリオ", "アイドル", "音楽祭", "映画"]
+    def _is_noise(hint_title):
+        low = hint_title.lower()
+        return any(nt.lower() in low for nt in NOISE_TERMS)
+
+    def _too_similar(hint_title):
+        """タイトルとhintの内容語(4字以上)が50%以上重複したら同じネタとみなす"""
+        orig_kws = set(k.lower() for k in _extract_keywords(title))
+        hint_kws = set(k.lower() for k in _extract_keywords(hint_title))
+        if not orig_kws or not hint_kws:
+            return False
+        overlap = len(orig_kws & hint_kws)
+        smaller = min(len(orig_kws), len(hint_kws))
+        return smaller > 0 and (overlap / smaller) >= 0.5
+
     def _search(need, use_top):
         q = " ".join(keywords[:use_top])
         url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(q) + "&hl=ja&gl=JP&ceid=JP:ja"
@@ -270,6 +317,12 @@ def fetch_reason_hint(title, timeout=8):
             hint_title = clean(e.get("title", ""))
             if not hint_title or hint_title[:18] == title[:18]:
                 continue
+            if _is_noise(hint_title):
+                continue  # 無関係トピック混入は即弾く
+            if hint_title in _REASON_USED_HINTS:
+                continue  # 同一ヒントの重複禁止
+            if _too_similar(hint_title):
+                continue  # 元タイトルと内容がほぼ同じ続報も弾く
             hits = sum(1 for kw in keywords if kw.lower() in hint_title.lower())
             if hits >= need:
                 return hint_title[:150]
@@ -281,6 +334,7 @@ def fetch_reason_hint(title, timeout=8):
             result = _search(need=1, use_top=3)   # 緩めて再検索
         if result:
             _REASON_FAIL_STREAK = 0
+            _REASON_USED_HINTS.add(result)
         return result
     except Exception:
         _REASON_FAIL_STREAK += 1
@@ -306,11 +360,28 @@ def collect_topic_items(t, seen, sleep_sec=0.4):
 
     picked = []
     picked_keys = set()
+    picked_kw_sets = []  # 既に採用した記事の内容語セット集(類似排除用)
+    def _sim_dup(title):
+        """既採用記事と内容語(4字以上)が50%以上重複したら類似記事とみなす"""
+        new_kws = set(k.lower() for k in _extract_keywords(title))
+        if not new_kws:
+            return False
+        for prev in picked_kw_sets:
+            if not prev:
+                continue
+            overlap = len(new_kws & prev)
+            smaller = min(len(new_kws), len(prev))
+            if smaller > 0 and (overlap / smaller) >= 0.5:
+                return True
+        return False
     def add_item(item):
         key = item[1] or canonical_title(item[0])
         if key in picked_keys:
             return
+        if _sim_dup(item[0]):
+            return  # 中銀政策で同じ内容の連続記事を弾く
         picked_keys.add(key)
+        picked_kw_sets.append(set(k.lower() for k in _extract_keywords(item[0])))
         picked.append(item)
 
     for rows in source_hits:

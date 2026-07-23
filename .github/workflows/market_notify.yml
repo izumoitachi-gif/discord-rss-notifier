@@ -1,10 +1,10 @@
 name: 金融市場Bot Phase2/3 開示・政策・SEC速報
 on:
   schedule:
-    - cron: '25,55 * * * *'   # IC倶楽部(5,35)・AIラボ(15,45)と衝突しない毎時25分・55分
-  workflow_dispatch:           # 手動実行ボタン
+    - cron: '25,55 * * * *'
+  workflow_dispatch:
 permissions:
-  contents: write              # market_seen_urls.json をコミットで永続化
+  contents: write
 jobs:
   notify:
     runs-on: ubuntu-latest
@@ -17,6 +17,7 @@ jobs:
         env:
           MARKET_WEBHOOK_TSE: ${{ secrets.MARKET_WEBHOOK_TSE }}
           MARKET_WEBHOOK_MACRO: ${{ secrets.MARKET_WEBHOOK_MACRO }}
+          MARKET_WEBHOOK_WORLD: ${{ secrets.MARKET_WEBHOOK_WORLD }}
           MARKET_WEBHOOK_SOURCELOG: ${{ secrets.MARKET_WEBHOOK_SOURCELOG }}
         run: python market_news_bot.py
       - name: commit seen file
