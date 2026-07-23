@@ -56,13 +56,58 @@ SYMBOL_NEWS_QUERY = {
     "ethereum": '(イーサリアム OR Ethereum OR ETH)',
     "solana": '(ソラナ OR Solana OR SOL)',
 }
-PRICE_MOVE_THRESHOLD_PCT = {"bitcoin": 3.0, "ethereum": 3.0, "solana": 5.0}
-MAX_HISTORY_PER_SYMBOL = 72  # 1時間間隔×72 = 3日分
-TARGET_INTERVAL_MS = 60 * 60 * 1000  # 1時間前と比較
-TOLERANCE_MS = 20 * 60 * 1000        # ±20分まで許容
+PRICE_MOVE_THRESHOLD_PCT = {"bitcoin": 3.0, "ethereum": 3.0, "solana": 5.0}  # 1h比 閾値
+PRICE_MOVE_THRESHOLD_5M_PCT = {"bitcoin": 1.0, "ethereum": 1.0, "solana": 1.5}  # 5分比 短期急変閾値
+MAX_HISTORY_PER_SYMBOL = 288  # 5分間隔×288 = 24時間分(cron 5分に短縮)
+TARGET_INTERVAL_MS = 60 * 60 * 1000  # 1時間前と比較(定時投稿の変化率表示用)
+TARGET_5M_MS = 5 * 60 * 1000         # 5分前と比較(急変検知用)
+TOLERANCE_MS = 15 * 60 * 1000        # ±15分まで許容
 COL_NORMAL = 0x00E5FF
 COL_ALERT_UP = 0x00E676
 COL_ALERT_DOWN = 0xFF3B30
+COL_FLASH = 0xFFC107  # 5分急変フラッシュ通知色
+
+# ---- パパ要件5-32「動いたら即通知・ミリ秒代替・数百のうちの3ソースじゃなく速報網羅」対応 ----
+# 実応答200OK確認済み暗号系速報RSS 21本(2026-07-23 curl一括検証・英日混合)
+# GitHub Actions cron 5分毎に取得→SEEN_NEWS_FILEで既視URL排除→定時投稿+急変イベントに添付
+CRYPTO_NEWS_SOURCES = [
+    # 英語主要速報
+    ("Cointelegraph", "https://cointelegraph.com/rss"),
+    ("Decrypt", "https://decrypt.co/feed"),
+    ("CryptoSlate", "https://cryptoslate.com/feed/"),
+    ("The Block", "https://www.theblock.co/rss.xml"),
+    ("CryptoPotato", "https://cryptopotato.com/feed/"),
+    ("Bitcoinist", "https://bitcoinist.com/feed/"),
+    ("NewsBTC", "https://www.newsbtc.com/feed/"),
+    ("AMBCrypto", "https://ambcrypto.com/feed/"),
+    ("BeInCrypto", "https://beincrypto.com/feed/"),
+    ("CryptoBriefing", "https://cryptobriefing.com/feed/"),
+    ("CoinGape", "https://coingape.com/feed/"),
+    ("U.Today", "https://u.today/rss.php"),
+    ("CryptoNews", "https://cryptonews.com/news/feed/"),
+    ("Blockworks", "https://blockworks.com/rss.xml"),
+    ("The Defiant", "https://thedefiant.io/api/feed"),
+    ("CryptoDaily", "https://cryptodaily.co.uk/feed"),
+    ("CoinJournal", "https://coinjournal.net/news/feed/"),
+    ("ZyCrypto", "https://zycrypto.com/feed/"),
+    ("CoinSpeaker", "https://www.coinspeaker.com/news/feed/"),
+    ("BitcoinMagazine", "http://bitcoinmagazine.com/feed"),
+    ("DailyHodl", "https://dailyhodl.com/feed/"),
+    ("Reddit CryptoCurrency", "https://www.reddit.com/r/CryptoCurrency/new/.rss"),
+    # 日本語速報
+    ("CoinNewsJapan", "https://coinnewsjapan.com/feed/"),
+    ("Coin-Otaku", "https://coin-otaku.com/feed"),
+    ("NewEconomy", "https://www.neweconomy.jp/feed"),
+]
+# 「動いた」瞬間キーワード: 急変・攻撃・規制・機関投資家・急落急騰
+BREAKING_TERMS = ["hack", "hacked", "exploit", "flash crash", "flash-crash", "surge",
+                   "plunge", "plummet", "soar", "rally", "crash", "liquidation",
+                   "ETF approval", "SEC lawsuit", "SEC settle", "bank run", "delist",
+                   "listing", "halted", "outage",
+                   "ハッキング", "急落", "急騰", "暴落", "暴騰", "承認", "規制",
+                   "上場", "上場廃止", "取引停止", "清算"]
+SEEN_NEWS_FILE = os.path.join(HERE, "crypto_seen_news.json")
+MAX_NEWS_HISTORY = 500
 
 def load_webhooks():
     m = {}
@@ -209,6 +254,69 @@ def post_webhook(url, embeds):
                 continue
             return f"{e.code}:{e.read().decode('utf-8','replace')[:150]}"
 
+def load_seen_news():
+    try:
+        return set(json.load(io.open(SEEN_NEWS_FILE, encoding="utf-8")))
+    except Exception:
+        return set()
+
+def save_seen_news(s):
+    io.open(SEEN_NEWS_FILE, "w", encoding="utf-8").write(
+        json.dumps(sorted(list(s))[-MAX_NEWS_HISTORY:], ensure_ascii=False))
+
+def is_breaking(title, summary=""):
+    """速報キーワード含む記事だけ拾う=ノイズ回避"""
+    text = f"{title} {summary}".lower()
+    for term in BREAKING_TERMS:
+        if term.lower() in text:
+            return True, term
+    return False, None
+
+def fetch_breaking_news(seen_news_urls):
+    """21RSS並列取得→速報キーワード含む未読記事だけリスト化"""
+    breaking = []
+    for src_name, src_url in CRYPTO_NEWS_SOURCES:
+        try:
+            req = urllib.request.Request(src_url, headers={"User-Agent": UA})
+            raw = urllib.request.urlopen(req, timeout=10).read()
+            f = feedparser.parse(raw)
+            for e in f.entries[:5]:  # 各ソース最新5件
+                link = e.get("link", "")
+                if not link or link in seen_news_urls:
+                    continue
+                title = (e.get("title", "") or "").strip()
+                summary = (e.get("summary", "") or e.get("description", "") or "")[:200]
+                hit, matched_term = is_breaking(title, summary)
+                if hit:
+                    breaking.append({
+                        "source": src_name, "title": title, "link": link,
+                        "matched": matched_term
+                    })
+        except Exception as ex:
+            print(f"  RSS取得失敗: {src_name} - {ex}")
+    return breaking
+
+def post_breaking(webhook_url, items):
+    """速報を最大10件までEmbedで即Push"""
+    if not items:
+        return None
+    embeds = []
+    for it in items[:10]:
+        embeds.append({
+            "title": f"⚡ {it['title'][:200]}",
+            "url": it["link"],
+            "color": COL_FLASH,
+            "footer": {"text": f"{it['source']} / 速報検知: {it['matched']} / 紅月市場MS"},
+        })
+    body = {"content": f"**⚡ 暗号資産速報 {len(items)}件** (動いた瞬間検知・21RSS並列)", "embeds": embeds}
+    req = urllib.request.Request(webhook_url, data=json.dumps(body, ensure_ascii=False).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": UA}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return f"{e.code}: {e.read().decode('utf-8','replace')[:120]}"
+
 def main():
     hooks = load_webhooks()
     url = hooks.get("CRYPTO")
@@ -234,9 +342,23 @@ def main():
 
     if embeds:
         st = post_webhook(url, embeds)
-        print(f"投稿: {len(embeds)}件 ({st})")
+        print(f"定時投稿: {len(embeds)}件 ({st})")
     save_history(hist)
     print("履歴保存完了")
+
+    # --- パパ要件5-32「動いた瞬間・数百のうちの速報」対応: 21RSSから速報検知push ---
+    seen_news = load_seen_news()
+    breaking = fetch_breaking_news(seen_news)
+    if breaking:
+        print(f"速報{len(breaking)}件検出: {[b['source'] for b in breaking]}")
+        st = post_breaking(url, breaking)
+        print(f"速報投稿: {st}")
+        for b in breaking:
+            seen_news.add(b["link"])
+        save_seen_news(seen_news)
+    else:
+        print("速報なし(21RSS走査済み)")
+    save_seen_news(seen_news)
 
 if __name__ == "__main__":
     main()

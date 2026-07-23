@@ -1,7 +1,7 @@
-name: 金融市場Bot Phase1(A案v2) BTC/ETH/SOL 1時間ポーリング
-on:  # 2026-07-23 schedule re-register(GitHub cron認識ラグ回避のためのdummy touch)
+name: 金融市場Bot Phase1(A案v3) BTC/ETH/SOL 5分ポーリング+21RSS速報検知
+on:  # schedule re-register(GitHub cron認識ラグ回避のためのdummy touch)
   schedule:
-    - cron: '0 * * * *'   # 毎時0分(投稿頻度を下げる・パパ指摘対応)
+    - cron: '*/5 * * * *'   # 5分毎(仕様上最短)・パパ要件5-32「動いた瞬間」対応
   workflow_dispatch:
 permissions:
   contents: write
@@ -17,10 +17,10 @@ jobs:
         env:
           MARKET_WEBHOOK_CRYPTO: ${{ secrets.MARKET_WEBHOOK_CRYPTO }}
         run: python crypto_price_poll.py
-      - name: commit history file
+      - name: commit history+seen files
         run: |
           git config user.name "market-crypto-bot"
           git config user.email "actions@github.com"
-          git add crypto_price_history.json || true
-          git diff --staged --quiet || git commit -m "chore: update crypto_price_history.json [skip ci]"
+          git add crypto_price_history.json crypto_seen_news.json || true
+          git diff --staged --quiet || git commit -m "chore: update crypto history+seen_news [skip ci]"
           git push || true
