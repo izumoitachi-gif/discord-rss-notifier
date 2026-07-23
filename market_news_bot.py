@@ -67,6 +67,17 @@ def gn(q, include=None, exclude=None, label=None, title_include=None, title_excl
 BOJ_POLICY_TERMS = ["金融政策", "決定会合", "総裁", "副総裁", "講演", "為替", "国債買入", "オペ", "展望レポート",
                      "生活意識", "短観", "金融システムレポート", "金融政策決定会合"]
 
+# ---- Phase 3: 世界市場（クロスアセット・リスク選好・地政学）2026-07-23追加 ----
+# パパ指摘「世界市場動いてない、RSSと絞り込みが足りない」→ 激裏カタログ(自分\激裏 ニュース・情報源
+# 取得ルート全宇宙.md PART2/5)から実応答確認済みの7ソース＋Google News 1本の計8本で厳選構成。
+# BBC/AlJazeera/DW/France24/CNN/NYTは全世界ニュース全般のフィードなのでtitle_includeで
+# 市場語に絞り込む。Reuters公式RSSは廃止済みのためGoogle News経由(site:reuters.com)で代替。
+WORLD_MARKET_TERMS = ["market", "markets", "stocks", "stock", "index", "indices", "S&P", "Nasdaq",
+                      "Dow Jones", "dollar", "yen", "yuan", "euro", "pound", "bond", "bonds", "yield",
+                      "yields", "rate hike", "rate cut", "interest rate", "inflation", "recession",
+                      "GDP", "trade war", "tariff", "tariffs", "oil price", "crude", "gold price",
+                      "risk-off", "risk-on", "sell-off", "selloff", "rally", "volatility", "股", "相場"]
+
 TOPICS = [
     {"num": "④", "name": "TSE適時開示", "env": "TSE", "color": COL_TSE, "per_channel": 12, "sources": [
         rss("https://webapi.yanoshin.jp/webapi/tdnet/list/recent.rss",
@@ -81,6 +92,17 @@ TOPICS = [
             title_include=BOJ_POLICY_TERMS, label="日本銀行 新着情報"),
         rss("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=40&output=atom",
             label="SEC EDGAR 8-K (getcurrent)"),
+    ]},
+    {"num": "①", "name": "世界市場速報", "env": "WORLD", "color": 0x00E5FF, "per_channel": 8, "sources": [
+        gn('(world markets OR stock market OR risk sentiment OR global economy) (乱高下 OR 急落 OR 急騰 OR 波乱 OR 動向)',
+           label="Google News（世界市場）"),
+        gn('site:reuters.com (market OR markets OR stocks OR economy)', label="Reuters（Google News経由）"),
+        rss("https://feeds.bbci.co.uk/news/business/rss.xml", title_include=WORLD_MARKET_TERMS, label="BBC Business"),
+        rss("https://www.aljazeera.com/xml/rss/all.xml", title_include=WORLD_MARKET_TERMS, label="Al Jazeera"),
+        rss("https://rss.dw.com/rdf/rss-en-all", title_include=WORLD_MARKET_TERMS, label="Deutsche Welle"),
+        rss("https://www.france24.com/en/rss", title_include=WORLD_MARKET_TERMS, label="France24"),
+        rss("http://rss.cnn.com/rss/edition.rss", title_include=WORLD_MARKET_TERMS, label="CNN"),
+        rss("https://rss.nytimes.com/services/xml/rss/nyt/World.xml", title_include=WORLD_MARKET_TERMS, label="NYT World"),
     ]},
 ]
 
