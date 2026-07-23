@@ -53,6 +53,11 @@ GLOBAL_EXCLUDE = [
     "PR TIMES", "プレスリリース", "アットプレス", "valuepress",
     "求人", "採用", "セミナー", "イベント開催", "ライブ配信", "ウェビナー",
     "キャンペーン", "無料公開", "広告", "Sponsored",
+    # 2026-07-23 世界市場ノイズ削減（実投稿見て発見・パパ指摘）
+    "市場調査レポート", "市場規模", "業界動向 予測", "グローバルインフォメーション",
+    "価格予測", "Tokenised Stock", "xStock", "Bitget",
+    "自動水門", "半導体市場調査", "化学市場", "産業レポート",
+    "アフィリエイト", "MLM", "副業", "投資助言", "投資顧問",
 ]
 
 def rss(url, include=None, exclude=None, label=None, title_include=None, title_exclude=None):
@@ -147,8 +152,11 @@ def is_ja(t):
     return len(_JP_RE.findall(t)) >= max(3, int(len(t) * 0.12))
 
 def _gtranslate(text, timeout):
+    # sl=auto は「末尾に日本語表記(- ロイター等)が3文字あるだけで元言語=ja」と誤判定し、
+    # 翻訳せず原文をそのまま返すバグ実測（2026-07-23）。sl=en に固定して強制英日翻訳する。
+    # is_ja() で先に日本語と判定されたものはそもそもここに到達しないので副作用なし。
     url = "https://translate.googleapis.com/translate_a/single?" + urllib.parse.urlencode({
-        "client": "gtx", "sl": "auto", "tl": "ja", "dt": "t", "q": text[:4800]
+        "client": "gtx", "sl": "en", "tl": "ja", "dt": "t", "q": text[:4800]
     })
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
