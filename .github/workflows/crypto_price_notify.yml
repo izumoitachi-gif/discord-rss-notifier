@@ -1,7 +1,7 @@
 name: 金融市場Bot Phase1(A案v3) BTC/ETH/SOL 5分ポーリング+21RSS速報検知
 on:  # schedule re-register(GitHub cron認識ラグ回避のためのdummy touch)
   schedule:
-    - cron: '*/5 * * * *'   # 5分毎(仕様上最短)・パパ要件5-32「動いた瞬間」対応
+    - cron: '2-59/5 * * * *'   # 5分間隔(2-59/5:過去事件の教訓で他workflowと衝突しない奇数時刻に)・パパ要件5-32「動いた瞬間」対応
   workflow_dispatch:
 permissions:
   contents: write
