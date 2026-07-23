@@ -230,11 +230,61 @@ def fetch(src):
         if include and not contains_any(filter_text, include): continue
         if exclude and contains_any(filter_text, exclude): continue
         seen_titles.add(title_key)
-        if len(summ) < 25 or summ[:18] == title[:18]: summ = ""
-        summ = summ[:200] + ("…" if len(summ) > 200 else "")
+        # summaryはタイトルと冒頭18字丸被りだけを空扱いに緩和（旧: 25字未満も空にしていたが
+        # TDnet/BOJ/Fedはそもそも短いor無いのでdesc空欄になる問題があった）
+        if summ and summ[:18] == title[:18]:
+            summ = ""
+        summ = summ[:250] + ("…" if len(summ) > 250 else "")
         out.append((title, e.get("link", ""), summ, src.get("label") or entry_source or feed_label))
         if len(out) >= PER_SOURCE: break
     return out
+
+# ---- 「何が起きたか」補完: summary空の時にGoogle Newsで関連記事1件を引く ----
+# 呼び出し頻度を絞るため、TSE以外(=英語ニュース中心)かつsummary空の記事だけに適用する。
+_REASON_FAIL_STREAK = 0
+_REASON_MAX_FAIL = 3
+_STOP_WORDS = {"the","and","for","with","from","that","this","have","has","was","are","been",
+               "will","its","not","new","one","two","2026","2025"}
+def _extract_keywords(title):
+    """タイトルから内容語(4文字以上)を抽出。固有名詞優先。"""
+    tokens = re.findall(r"[A-Za-z][a-zA-Z0-9]{3,}|[ァ-ヶー]{3,}|[一-龠]{2,}", title)
+    return [t for t in tokens if t.lower() not in _STOP_WORDS][:8]
+
+def fetch_reason_hint(title, timeout=8):
+    """タイトルから固有名詞を抽出→Google News検索→固有名詞1個以上マッチした結果のみ採用。
+    無関係なK-POP等のノイズを弾く。"""
+    global _REASON_FAIL_STREAK
+    if _REASON_FAIL_STREAK >= _REASON_MAX_FAIL:
+        return ""
+    keywords = _extract_keywords(title)
+    if not keywords:
+        return ""
+    # 2段構え検索: ①AND2件必須で高精度に取る ②見つからなければ緩めて1件必須で再検索
+    def _search(need, use_top):
+        q = " ".join(keywords[:use_top])
+        url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(q) + "&hl=ja&gl=JP&ceid=JP:ja"
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        raw = urllib.request.urlopen(req, timeout=timeout).read()
+        f = feedparser.parse(raw)
+        for e in f.entries[:8]:
+            hint_title = clean(e.get("title", ""))
+            if not hint_title or hint_title[:18] == title[:18]:
+                continue
+            hits = sum(1 for kw in keywords if kw.lower() in hint_title.lower())
+            if hits >= need:
+                return hint_title[:150]
+        return ""
+    try:
+        need2 = 2 if len(keywords) >= 2 else 1
+        result = _search(need=need2, use_top=4)
+        if not result and need2 >= 2:
+            result = _search(need=1, use_top=3)   # 緩めて再検索
+        if result:
+            _REASON_FAIL_STREAK = 0
+        return result
+    except Exception:
+        _REASON_FAIL_STREAK += 1
+        return ""
 
 def collect_topic_items(t, seen, sleep_sec=0.4):
     per_channel = t.get("per_channel", PER_CHANNEL_DEFAULT)
@@ -301,7 +351,17 @@ def main():
         picked = collect_topic_items(t, seen)
         if not picked:
             print(f"{t['num']} {t['name']} … 新規なし"); continue
-        picked = [(to_ja(ti), li, to_ja(su), sr) for (ti, li, su, sr) in picked]  # 英語→日本語（失敗時は原文）
+        # 補完は翻訳前のオリジナルタイトル(英語)でGoogle News検索→固有名詞照合
+        # TSEは日本語一次開示で本文がPDFなので補完スキップ
+        enriched = []
+        for (ti, li, su, sr) in picked:
+            if not su and t["env"] != "TSE":
+                hint = fetch_reason_hint(ti)  # ← まだ翻訳前(英語含む原題)
+                if hint:
+                    su = f"🗞️関連: {hint}"
+                    time.sleep(0.4)
+            enriched.append((ti, li, su, sr))
+        picked = [(to_ja(ti), li, to_ja(su), sr) for (ti, li, su, sr) in enriched]  # 英語→日本語（失敗時は原文）
         st = post(url, f"**{t['num']}｜{t['name']}**", picked, t["color"])
         for _, link, _, _ in picked: seen.add(link)
         print(f"{t['num']} {t['name']} … {len(picked)}件 ({st})")
