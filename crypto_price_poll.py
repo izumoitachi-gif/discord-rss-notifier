@@ -107,19 +107,34 @@ def nearest_past(snapshots, now_ms):
         return None
     return best
 
-def fetch_reason_news(symbol_id, change_pct):
-    """閾値超過時のみ: なぜ動いたかの手がかりをGoogle Newsから1〜2件取得"""
-    direction = "急騰 OR 高騰 OR 上昇" if change_pct > 0 else "急落 OR 暴落 OR 下落"
-    q = f"{SYMBOL_NEWS_QUERY[symbol_id]} ({direction})"
+def fetch_reason_news(symbol_id, change_pct, is_alert):
+    """パパ要件5-29「その数値か？」対応：閾値超過時2件・通常時も1件は原因ヒント添付する
+    ノイズ回避のためNOISE_TERMSで無関係トピック弾く+同一hint重複禁止"""
+    NOISE_TERMS = ["気候変動", "熱波", "山火事", "K-POP", "解散", "追悼", "訃報", "死去",
+                    "オークション", "紙幣", "映画", "アイドル", "音楽祭"]
+    # 通常時は0.3%未満でも呼び出し側から意味ある閾値を渡すので受け入れる（パパ要件5-29対応）
+    direction_up = change_pct > 0
+    if is_alert:
+        direction_q = "急騰 OR 高騰 OR 上昇" if direction_up else "急落 OR 暴落 OR 下落"
+        wanted = 2
+    else:
+        direction_q = "上昇 OR 高値 OR 反発 OR 買い" if direction_up else "下落 OR 安値 OR 売り"
+        wanted = 1
+    q = f"{SYMBOL_NEWS_QUERY[symbol_id]} ({direction_q})"
     url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(q) + "&hl=ja&gl=JP&ceid=JP:ja"
     try:
         f = feedparser.parse(url)
         items = []
-        for e in f.entries[:2]:
+        for e in f.entries[:8]:
             title = (e.get("title", "") or "").strip()
             link = e.get("link", "")
-            if title and link:
-                items.append((title, link))
+            if not title or not link:
+                continue
+            if any(nt in title for nt in NOISE_TERMS):
+                continue
+            items.append((title[:80], link))
+            if len(items) >= wanted:
+                break
         return items
     except Exception as e:
         print(f"    ニュース検索失敗: {e}")
@@ -141,17 +156,25 @@ def build_embed(symbol_id, data, past_snapshot, now_ms):
         change_txt = "（履歴不足・次回から変化率を計算）"
 
     reason_lines = ""
+    # パパ要件5-29「その数値か？」対応：閾値超過じゃなくても24h変化率で理由ヒント取る
+    change_24h = data.get("price_change_percentage_24h") or 0.0
+    ref_change = change_pct if change_pct is not None else change_24h
     if is_alert:
         color = COL_ALERT_UP if change_pct > 0 else COL_ALERT_DOWN
         title = f"🚨 {label} 1時間変化率 {change_pct:+.2f}%（閾値±{threshold}%超）"
-        news = fetch_reason_news(symbol_id, change_pct)
+        news = fetch_reason_news(symbol_id, change_pct, is_alert=True)
         if news:
-            reason_lines = "\n\n**関連ニュース（原因の手がかり）:**\n" + "\n".join(
-                f"・[{t[:60]}]({l})" for t, l in news)
+            reason_lines = "\n\n**なぜ動いた？（原因の手がかり）:**\n" + "\n".join(
+                f"・[{t}]({l})" for t, l in news)
         else:
             reason_lines = "\n\n（関連ニュース見つからず・単独の値動きの可能性）"
     else:
         color = COL_NORMAL
+        # 通常時も24h変化率でヒント添付(パパ要件5-29「その数値か？」対応・毎回背景を出す)
+        # 24h変化率で方向判定(1h変化がゼロ近くても1日単位では意味ある動きがあるため)
+        news = fetch_reason_news(symbol_id, change_24h if abs(change_24h) >= 0.2 else 0.5, is_alert=False)
+        if news:
+            reason_lines = f"\n\n**背景（24h {change_24h:+.2f}%の要因ヒント）:** [{news[0][0]}]({news[0][1]})"
         title = f"{label}  ${price:,.2f}"
 
     day_high = data.get("high_24h")
